@@ -9,9 +9,14 @@ class Bucket(Base):
 class Object(Base):
     __tablename__ = "objects"
     id = Column(Integer,primary_key=True,index = True)
-    name = Column(String)
-
     bucket_id = Column(
         Integer,
         ForeignKey("buckets.id")
     )
+    object_name = Column(String, nullable=False)
+
+    file_path = Column(String, nullable=False)
+
+    checksum = Column(String, nullable=False)
+
+    size = Column(Integer, nullable=False)
