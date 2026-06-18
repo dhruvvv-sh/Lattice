@@ -171,14 +171,14 @@ Return object metadata
 
 # Current Features
 
-* ✅ Bucket creation
-* ✅ Bucket deletion
-* ✅ Object upload
-* ✅ Object download by ID
-* ✅ Bucket-wise object listing
-* ✅ SHA-256 checksum generation
-* ✅ Metadata persistence
-* ✅ Filesystem-backed storage engine
+* Bucket creation
+* Bucket deletion
+* Object upload
+* Object download by ID
+* Bucket-wise object listing
+* SHA-256 checksum generation
+* Metadata persistence
+* Filesystem-backed storage engine
 
 ---
 
