@@ -93,3 +93,37 @@ def download(object_id: int):
     db.close()
 
     return read_file(path)
+
+
+@router.delete("/{object_id}")
+def delete_obj(object_id: int):
+    db = SessionLocal()
+
+    try:
+        obj = db.query(Object).filter(Object.id == object_id).first()
+
+        if obj is None:
+            raise HTTPException(
+                status_code=404,
+                detail="Object not found"
+            )
+
+        if os.path.exists(obj.file_path):
+            os.remove(obj.file_path)
+
+        db.delete(obj)
+        db.commit()
+
+        return {
+            "message": "Object deleted successfully",
+            "object_id": object_id,
+            "filename": obj.object_name
+        }
+
+    except Exception:
+        db.rollback()
+        raise
+
+    finally:
+        db.close()
+        
