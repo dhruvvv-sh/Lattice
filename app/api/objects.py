@@ -1,7 +1,6 @@
-from fastapi import APIRouter,UploadFile, File, HTTPException
+from fastapi import APIRouter, UploadFile, File, HTTPException
 from app.database import SessionLocal
-from app.models import Object
-from app.models import Bucket
+from app.models import Object, Bucket
 from app.storage_engine.writer import save_file
 from app.storage_engine.checksum import calculate_checksum
 from app.storage_engine.reader import read_file
@@ -41,7 +40,8 @@ def upload(
                 detail="Bucket not found"
             )
 
-        path = save_file(bucket_id, file)
+        # save_file now returns both path and disk
+        path, disk = save_file(bucket_id, file)
 
         checksum = calculate_checksum(path)
         size = os.path.getsize(path)
@@ -50,6 +50,7 @@ def upload(
             bucket_id=bucket_id,
             object_name=file.filename,
             file_path=path,
+            disk_name=disk,      # <-- add this field
             checksum=checksum,
             size=size
         )
@@ -61,6 +62,7 @@ def upload(
         return {
             "object_id": obj.id,
             "filename": obj.object_name,
+            "disk": obj.disk_name,
             "checksum": obj.checksum,
             "size": obj.size
         }
@@ -91,6 +93,7 @@ def download(object_id: int):
     obj = db.query(Object).filter(
         Object.id == object_id
     ).first()
+
     if obj is None:
         db.close()
         raise HTTPException(
@@ -104,7 +107,6 @@ def download(object_id: int):
             status_code=404,
             detail="Object not found"
         )
-    
 
     path = obj.file_path
 
@@ -115,10 +117,13 @@ def download(object_id: int):
 
 @router.delete("/{object_id}")
 def delete_obj(object_id: int):
+
     db = SessionLocal()
 
     try:
-        obj = db.query(Object).filter(Object.id == object_id).first()
+        obj = db.query(Object).filter(
+            Object.id == object_id
+        ).first()
 
         if obj is None:
             raise HTTPException(
@@ -144,4 +149,3 @@ def delete_obj(object_id: int):
 
     finally:
         db.close()
-        

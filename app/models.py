@@ -19,4 +19,6 @@ class Object(Base):
 
     checksum = Column(String, nullable=False)
 
+    disk_name = Column(String, nullable=False)
+    
     size = Column(Integer, nullable=False)

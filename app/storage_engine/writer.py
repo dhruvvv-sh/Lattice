@@ -1,12 +1,26 @@
-#Given a bucket ID and an uploaded file, save it to disk and return the file path.
 import os
-def save_file(bucket_id:int, file):
-    bucket_folder = f"storage/bucket_{bucket_id}"
-    os.makedirs(bucket_folder,exist_ok=True) # basically if this folder already exists, don't crash, just move on
+
+from app.storage_engine.disk_selector import get_next_disk
+
+
+def save_file(bucket_id: int, file):
+
+    # Select disk using round robin
+    disk = get_next_disk()
+
+    # Create bucket folder inside selected disk
+    bucket_folder = f"storage/{disk}/bucket_{bucket_id}"
+    os.makedirs(bucket_folder, exist_ok=True)
+
+    # Full file path
     filepath = os.path.join(
         bucket_folder,
         file.filename
-    )#This combines the folder path and the original filename (e.g., photo.jpg) into a single, clean path (like storage/bucket_105/photo.jpg).
-    with open(filepath,"wb") as buffer: #writes this to the disk : WB -> write binary since objects
-        buffer.write(file.file.read()) #reads raw binary so that it can be stored in buffer.write permanently
-    return filepath
+    )
+
+    # Save file
+    with open(filepath, "wb") as buffer:
+        buffer.write(file.file.read())
+
+    # Return both path and disk name
+    return filepath, disk
