@@ -50,7 +50,7 @@ def upload(
             bucket_id=bucket_id,
             object_name=file.filename,
             file_path=path,
-            disk_name=disk,      # <-- add this field
+            disk_name=disk,      # <-- present for the disk selection function 
             checksum=checksum,
             size=size
         )
