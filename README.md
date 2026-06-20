@@ -1,72 +1,62 @@
 # Lattice
 
-**Lattice** is a distributed, **S3-compatible object storage engine** built with **Python** and **FastAPI**. It provides scalable object storage through a modular architecture supporting buckets, multipart uploads, deduplication, metadata management, and future horizontal scaling across multiple storage nodes.
+Lattice is an S3-inspired object storage engine built with **Python**, **FastAPI**, and **PostgreSQL**. The project explores the internal architecture of modern object storage systems such as Amazon S3 and MinIO by implementing their core building blocks from first principles.
 
-The project aims to explore the design principles behind modern object storage systems such as Amazon S3 and MinIO while maintaining compatibility with standard S3 clients.
+Rather than serving as a simple file upload API, Lattice is designed as a modular storage engine with separate metadata and storage layers, enabling future support for replication, erasure coding, and distributed storage clusters.
 
 ---
 
-## Features
+# Current Features
 
-* S3-compatible REST API
+* RESTful object storage API
 * Bucket creation and management
 * Object upload, download, and deletion
-* Multipart uploads
-* SHA-256 content hashing
-* Content-addressable deduplication
-* Object versioning
-* Metadata persistence
-* Redis-backed metadata caching
-* JWT authentication
-* Modular storage engine
-* Designed for future distributed replication
+* PostgreSQL-backed metadata persistence
+* SHA-256 checksum generation
+* Multi-disk object placement
+* Round-robin storage allocation
+* Modular storage engine abstraction
+* Concurrent upload support
+* Performance benchmarking using Locust
 
 ---
 
 # Architecture
 
 ```
-                    AWS CLI
+                    Client
                        │
                        ▼
-                FastAPI Server
+                 FastAPI Server
                        │
-        ┌──────────────┴──────────────┐
-        │                             │
-        ▼                             ▼
-   PostgreSQL                    Redis Cache
-(metadata & users)          (hot objects/cache)
-
+              PostgreSQL Metadata
                        │
                        ▼
-              Object Storage Engine
+              Storage Placement Layer
                        │
-           ┌───────────┴───────────┐
-           ▼                       ▼
-        Disk 1                 Disk 2
+        ┌──────────────┼──────────────┐
+        ▼              ▼              ▼
+     Disk 1         Disk 2         Disk 3
 ```
 
-The API layer handles all incoming requests while PostgreSQL stores persistent metadata and Redis accelerates frequently accessed object lookups. The storage engine abstracts physical storage and manages object placement independently of the API.
+The API layer is responsible for request handling while the storage engine independently determines physical object placement across multiple storage disks.
+
+This separation allows future storage strategies to be implemented without modifying the API layer.
 
 ---
 
 # Technology Stack
 
-| Layer            | Technology       |
-| ---------------- | ---------------- |
-| Language         | Python 3.12      |
-| API              | FastAPI          |
-| Database         | PostgreSQL       |
-| Cache            | Redis            |
-| ORM              | SQLAlchemy       |
-| Authentication   | JWT              |
-| Storage          | Local Filesystem |
-| Async Runtime    | asyncio          |
-| File I/O         | aiofiles         |
-| Containerization | Docker           |
-| Reverse Proxy    | Nginx            |
-| Testing          | pytest           |
-| CI/CD            | GitHub Actions   |
+| Component         | Technology       |
+| ----------------- | ---------------- |
+| Language          | Python 3         |
+| API               | FastAPI          |
+| ORM               | SQLAlchemy       |
+| Metadata Database | PostgreSQL       |
+| Storage Backend   | Local Filesystem |
+| Load Testing      | Locust           |
+| Authentication    | JWT (planned)    |
+| Cache             | Redis (planned)  |
 
 ---
 
@@ -77,160 +67,109 @@ lattice/
 
 ├── app/
 │   ├── api/
-│   ├── auth/
-│   ├── buckets/
-│   ├── objects/
-│   ├── storage/
-│   ├── metadata/
-│   ├── replication/
-│   ├── multipart/
-│   ├── dedup/
-│   ├── scheduler/
+│   ├── storage_engine/
+│   ├── models/
+│   ├── database.py
 │   └── utils/
 │
-├── tests/
-├── docker/
-├── docs/
+├── storage/
+│   ├── disk1/
+│   ├── disk2/
+│   └── disk3/
+│
 ├── benchmarks/
-├── scripts/
-├── docker-compose.yml
-└── README.md
+├── tests/
+├── README.md
+└── requirements.txt
 ```
 
-Each module is isolated to simplify maintenance and allow future replacement of individual components without affecting the overall architecture.
+---
+
+# Storage Engine
+
+Objects are distributed across multiple storage disks using a round-robin placement strategy.
+
+Example:
+
+```
+Upload 1 → disk1
+Upload 2 → disk2
+Upload 3 → disk3
+Upload 4 → disk1
+Upload 5 → disk2
+```
+
+Metadata stored in PostgreSQL records the physical location of every object, allowing retrieval independent of storage placement.
 
 ---
 
-# Database Schema
+# Benchmarks
 
-## Users
+## v1 (SQLite)
 
-| Field         | Type      |
-| ------------- | --------- |
-| id            | UUID      |
-| email         | VARCHAR   |
-| password_hash | TEXT      |
-| created_at    | TIMESTAMP |
+* Metadata backend: SQLite
+* Upload failures under concurrent load due to SQLite write locking
+* Baseline implementation
 
----
+## v2 (PostgreSQL)
 
-## Buckets
+* Migrated metadata layer to PostgreSQL
+* Eliminated concurrent write-lock failures
+* Reduced upload latency significantly
+* Improved concurrent upload performance
 
-| Field       | Type      |
-| ----------- | --------- |
-| id          | UUID      |
-| owner_id    | UUID      |
-| bucket_name | VARCHAR   |
-| created_at  | TIMESTAMP |
+Performance benchmarks are available in the `benchmarks/` directory.
 
 ---
 
-## Objects
+# Design Principles
 
-| Field        | Type      |
-| ------------ | --------- |
-| id           | UUID      |
-| bucket_id    | UUID      |
-| key          | TEXT      |
-| size         | BIGINT    |
-| sha256       | TEXT      |
-| version      | INTEGER   |
-| created_at   | TIMESTAMP |
-| storage_path | TEXT      |
-
----
-
-# Design Goals
-
-* S3 API compatibility
-* Clean separation between metadata and object storage
-* Modular architecture
-* Horizontal scalability
-* Fault-tolerant design
-* Efficient large object handling
-* Content-addressable storage
-* Future support for distributed replication
+* Separation of metadata and object storage
+* Modular storage engine design
+* Storage placement abstraction
+* Extensible architecture
+* S3-inspired object model
+* Performance-driven development
 
 ---
 
 # Roadmap
 
-## Phase 1
+## Completed
 
 * Bucket management
-* Object CRUD
-* Metadata persistence
-* Filesystem backend
+* Object CRUD operations
+* PostgreSQL metadata engine
+* Multi-disk storage abstraction
+* Round-robin object placement
+* Performance benchmarking
 
-## Phase 2
+## In Progress
 
-* Authentication
-* Access control
-* Object listing
+* Replicated object storage
+* Read failover
+* Disk health monitoring
 
-## Phase 3
+## Planned
 
-* SHA-256 deduplication
-* Redis metadata cache
-
-## Phase 4
-
+* Reed-Solomon erasure coding
 * Multipart uploads
-* Parallel upload support
-* Upload resume capability
-
-## Phase 5
-
+* Redis metadata caching
 * Object versioning
-* Soft deletion
-* Lifecycle management
-
-## Phase 6
-
+* Deduplication
 * Presigned URLs
-* Temporary object access
-* Secure sharing
-
-## Phase 7
-
-* Multi-node storage
-* Object placement strategy
-* Consistent hashing
-
-## Phase 8
-
-* Replication
-* Node health monitoring
-* Automatic recovery
-
-## Phase 9
-
-* Full S3 API compatibility
-* AWS CLI integration
-* SDK compatibility
-
----
-
-# Future Work
-
-* Erasure coding
-* Compression
-* Encryption at rest
-* Object lifecycle policies
-* Storage quotas
-* Metrics and monitoring
-* Prometheus integration
-* Grafana dashboards
+* S3-compatible client support
+* AI-powered semantic object retrieval (RAG)
+* Distributed multi-node storage
 * Kubernetes deployment
-* Cross-region replication
 
 ---
 
 # Motivation
 
-Modern applications depend heavily on object storage for managing images, videos, backups, machine learning datasets, and application assets.
+Lattice was created as a systems engineering project to understand how modern object storage platforms separate metadata management from physical storage while providing scalability, fault tolerance, and efficient object retrieval.
 
-Lattice is an educational systems project focused on understanding the internal architecture of distributed object storage engines by implementing the core concepts from first principles rather than relying on managed cloud services.
+The long-term objective is to evolve Lattice into a distributed storage engine featuring replication, erasure coding, and intelligent object retrieval while remaining compatible with standard S3 workflows.
 
 ---
 
