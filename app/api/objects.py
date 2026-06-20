@@ -20,6 +20,7 @@ def list_objects():
     db.close()
     return objects
 
+
 @router.post("/upload/{bucket_id}")
 def upload(
     bucket_id: int,
@@ -27,42 +28,59 @@ def upload(
 ):
 
     db = SessionLocal()
-    bucket = db.query(Bucket).filter(
-        Bucket.id == bucket_id
-    ).first()
+    path = None
 
-    if bucket is None:
-        db.close()
-        raise HTTPException(
-            status_code=404,
-            detail="Bucket not found"
+    try:
+        bucket = db.query(Bucket).filter(
+            Bucket.id == bucket_id
+        ).first()
+
+        if bucket is None:
+            raise HTTPException(
+                status_code=404,
+                detail="Bucket not found"
+            )
+
+        path = save_file(bucket_id, file)
+
+        checksum = calculate_checksum(path)
+        size = os.path.getsize(path)
+
+        obj = Object(
+            bucket_id=bucket_id,
+            object_name=file.filename,
+            file_path=path,
+            checksum=checksum,
+            size=size
         )
-    path = save_file(bucket_id, file)
 
-    checksum = calculate_checksum(path)
+        db.add(obj)
+        db.commit()
+        db.refresh(obj)
 
-    size = os.path.getsize(path)
+        return {
+            "object_id": obj.id,
+            "filename": obj.object_name,
+            "checksum": obj.checksum,
+            "size": obj.size
+        }
 
-    obj = Object(
-        bucket_id=bucket_id,
-        object_name=file.filename,
-        file_path=path,
-        checksum=checksum,
-        size=size
-    )
+    except Exception as e:
+        db.rollback()
 
-    db.add(obj)
-    db.commit()
-    db.refresh(obj)
-    response = {
-    "object_id": obj.id,
-    "filename": obj.object_name,
-    "checksum": obj.checksum,
-    "size": obj.size
-    }  
-    db.close()
-    return response
+        if path and os.path.exists(path):
+            os.remove(path)
 
+        import traceback
+        traceback.print_exc()
+
+        raise HTTPException(
+            status_code=500,
+            detail=f"Upload failed: {str(e)}"
+        )
+
+    finally:
+        db.close()
 
 
 @router.get("/{object_id}")
