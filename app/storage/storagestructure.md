@@ -1,4 +1,4 @@
-# Lattice Storage Engine Architecture
+# Lattice Storage Engine Architecture (v2)
 
 ## Upload Flow
 
@@ -12,116 +12,83 @@
                    │
                    ├── Validate bucket exists
                    ├── Receive uploaded bytes
-                   ├── Delegate to Storage Engine
-                   │
-                   ▼
-             Storage Engine
-                   │
-                   ├── Decide storage location
-                   ├── Create bucket directory if needed
-                   ├── Write file to disk
-                   ├── Calculate SHA-256 checksum
-                   ├── Calculate file size
-                   └── Return storage metadata
-                   │
-                   ▼
-            Metadata Layer
-              (PostgreSQL)
-                   │
-                   ├── object_id
-                   ├── bucket_id
-                   ├── object_name
-                   ├── file_path
-                   ├── checksum
-                   └── size
-                   │
-                   ▼
-            Return Success Response
+                   └── Delegate to Storage Engine
+                              │
+                              ▼
+                      Encoder Layer
+                              │
+                ┌─────────────┴─────────────┐
+                ▼                           ▼
+         Split into Shards          Generate Parity
+                │                           │
+                └─────────────┬─────────────┘
+                              ▼
+                        Disk Manager
+                              │
+      ┌──────────┬──────────┬──────────┬──────────┬──────────┬──────────┐
+      ▼          ▼          ▼          ▼          ▼          ▼
+    disk1      disk2      disk3      disk4      disk5      disk6
+   data0      data1      data2      data3     parity0    parity1
+                              │
+                              ▼
+                      Metadata Layer
+                        (PostgreSQL)
+                              │
+                              ▼
+                     Return Success Response
 ```
 
 ---
 
-# Download Flow
+## Download Flow
 
 ```text
-            Client
+                Client
 
-GET /objects/{object_id}
+        GET /objects/{object_id}
 
-                │
+                    │
+                    ▼
 
-                ▼
+              FastAPI API
 
-        FastAPI API
+                    │
+                    ▼
 
-                │
+          Query Metadata Layer
 
-                ▼
+                    │
+                    ▼
 
-      Query Metadata Layer
+          Retrieve Shard Metadata
 
-                │
+                    │
+                    ▼
 
-                ▼
+              Storage Engine
 
-Retrieve file_path
+                    │
 
-                │
+          Read Available Shards
 
-                ▼
+                    │
 
-        Storage Engine
+     Recover Missing Shards if Needed
 
-                │
+                    │
+                    ▼
 
-Open file from disk
+            Reconstruct Object
 
-                │
+                    │
+                    ▼
 
-                ▼
-
- Stream bytes to client
+          Stream Bytes to Client
 ```
 
 ---
 
-# Listing Objects
-
-```text
-            Client
-
-GET /buckets/{bucket_id}/objects
-
-                │
-
-                ▼
-
-        FastAPI API
-
-                │
-
-                ▼
-
-      Query Metadata Layer
-
-                │
-
-                ▼
-
-Return object metadata
-
-(id, name, size)
-
-                │
-
-                ▼
-
-            JSON Response
-```
-
----
-
-# Current Architecture
+## Current Architecture
 
 ```text
                     Client
@@ -131,81 +98,123 @@ Return object metadata
                │   FastAPI API   │
                └────────┬────────┘
                         │
-            ┌───────────┴───────────┐
-            ▼                       ▼
-      Metadata Layer         Storage Engine
-      (PostgreSQL)            (Filesystem)
-            │                       │
-            ▼                       ▼
-   Object metadata          Physical file bytes
+                        ▼
+               ┌─────────────────┐
+               │ Storage Engine  │
+               └────────┬────────┘
+                        │
+         ┌──────────────┼──────────────┐
+         ▼              ▼              ▼
+    Shard Manager  Erasure Engine  Disk Manager
+         │              │              │
+         └──────┬───────┴───────┬──────┘
+                ▼               ▼
+          Metadata Layer   Physical Disks
+            PostgreSQL
 ```
 
 ---
 
-# Storage Engine Responsibilities
+## Storage Engine Responsibilities
 
 * Receive uploaded bytes
-* Decide physical storage location
-* Create bucket directories
-* Write files to disk
-* Read files from disk
-* Delete physical files
+* Split objects into shards
+* Generate parity shards
+* Distribute shards across multiple disks
+* Read object shards from disk
+* Recover missing shards using parity
+* Reconstruct original objects
 * Compute SHA-256 checksums
-* Compute object size
+* Compute object sizes
 * Return storage metadata to the API layer
 
 ---
 
-# Metadata Layer Responsibilities
+## Metadata Layer Responsibilities
 
-* Generate object IDs
-* Map objects to buckets
-* Store object names
-* Store file paths
-* Store checksums
-* Store file sizes
-* Support object lookup by ID
-* Support listing objects by bucket
+### Objects Table
+
+* Object ID
+* Bucket ID
+* Object Name
+* Object Size
+* Object Checksum
+
+### Object Shards Table
+
+* Object ID
+* Shard Index
+* Disk Name
+* File Path
+* Parity Flag
+* Shard Size
 
 ---
 
-# Current Features
+## Fault Tolerance Model
+
+Lattice currently uses an experimental erasure-coding architecture:
+
+```text
+4 Data Shards + 2 Parity Shards
+```
+
+Example:
+
+```text
+disk1 -> data0
+disk2 -> data1
+disk3 -> data2
+disk4 -> data3
+disk5 -> parity0
+disk6 -> parity1
+```
+
+Objects are reconstructed from shards during reads. Lost shards can be rebuilt from parity information.
+
+---
+
+## Current Features
 
 * Bucket creation
 * Bucket deletion
 * Object upload
-* Object download by ID
+* Object download
 * Bucket-wise object listing
 * SHA-256 checksum generation
-* Metadata persistence
-* Filesystem-backed storage engine
+* Metadata persistence using PostgreSQL
+* Multi-disk storage
+* File sharding
+* Parity generation
+* Shard reconstruction
+* Single-shard recovery
+* Experimental erasure coding
 
 ---
 
-# Planned Features
+## Planned Features
 
-## Phase 2
+### Phase 3
 
-* Object deletion
 * Streaming uploads
 * Streaming downloads
-* Pydantic response filtering
-
-## Phase 3
-
+* Redis metadata cache
 * Deduplication using checksums
 * Presigned URLs
-* Redis metadata cache
 * Object lifecycle management
 
-## Phase 4
+### Phase 4
 
+* Reed-Solomon erasure coding
+* Automatic shard healing
+* Background repair jobs
+* Disk health monitoring
 * Multipart uploads
 * Object versioning
-* Replication
-* Erasure coding
 * Distributed storage nodes
-* Full S3-compatible API
+* Cross-node replication
+* S3-compatible API
+* RAG-powered semantic file retrieval
 
 ```
 ```
