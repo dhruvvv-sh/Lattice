@@ -1,8 +1,10 @@
 # Lattice
 
-Lattice is an S3-inspired object storage engine built with **Python**, **FastAPI**, and **PostgreSQL**. The project explores the internal architecture of modern object storage systems such as Amazon S3 and MinIO by implementing their core building blocks from first principles.
+Lattice is an S3-inspired object storage engine built with **Python**, **FastAPI**, and **PostgreSQL**. The project explores the internal architecture of modern object storage systems such as Amazon S3, MinIO, and Ceph by implementing their core storage mechanisms from first principles.
 
-Rather than serving as a simple file upload API, Lattice is designed as a modular storage engine with separate metadata and storage layers, enabling future support for replication, erasure coding, and distributed storage clusters.
+Unlike a traditional file upload API, Lattice separates metadata management from physical storage and introduces fault-tolerant storage concepts including object sharding, parity generation, and erasure-coded recovery.
+
+The long-term goal is to evolve Lattice into a distributed, fault-tolerant object storage platform with S3-compatible APIs and AI-powered semantic retrieval.
 
 ---
 
@@ -13,8 +15,11 @@ Rather than serving as a simple file upload API, Lattice is designed as a modula
 * Object upload, download, and deletion
 * PostgreSQL-backed metadata persistence
 * SHA-256 checksum generation
-* Multi-disk object placement
-* Round-robin storage allocation
+* Multi-disk storage architecture
+* Object sharding across storage disks
+* Parity shard generation
+* Object reconstruction from shards
+* Single-shard recovery using parity information
 * Modular storage engine abstraction
 * Concurrent upload support
 * Performance benchmarking using Locust
@@ -23,51 +28,90 @@ Rather than serving as a simple file upload API, Lattice is designed as a modula
 
 # Architecture
 
-```
+```text
                     Client
                        │
                        ▼
                  FastAPI Server
                        │
-              PostgreSQL Metadata
-                       │
                        ▼
-              Storage Placement Layer
+                Storage Engine
                        │
         ┌──────────────┼──────────────┐
         ▼              ▼              ▼
-     Disk 1         Disk 2         Disk 3
+  Shard Manager   Erasure Engine   Disk Manager
+        │              │              │
+        └──────┬───────┴───────┬──────┘
+               ▼               ▼
+        PostgreSQL        Storage Disks
+          Metadata
 ```
 
-The API layer is responsible for request handling while the storage engine independently determines physical object placement across multiple storage disks.
+The API layer remains independent of the storage implementation.
 
-This separation allows future storage strategies to be implemented without modifying the API layer.
+Objects are processed through the storage engine, split into shards, protected using parity information, and distributed across multiple storage disks. Metadata describing shard placement is stored separately in PostgreSQL.
+
+---
+
+# Fault-Tolerant Storage Model
+
+Lattice currently uses an experimental erasure-coding architecture:
+
+```text
+4 Data Shards + 2 Parity Shards
+```
+
+Example:
+
+```text
+disk1 → data0
+disk2 → data1
+disk3 → data2
+disk4 → data3
+disk5 → parity0
+disk6 → parity1
+```
+
+Objects are reconstructed during reads by combining stored shards. Missing shards can be rebuilt using parity information.
+
+Current implementation demonstrates:
+
+* Object sharding
+* Parity generation
+* Shard reconstruction
+* Single-shard recovery
 
 ---
 
 # Technology Stack
 
-| Component         | Technology       |
-| ----------------- | ---------------- |
-| Language          | Python 3         |
-| API               | FastAPI          |
-| ORM               | SQLAlchemy       |
-| Metadata Database | PostgreSQL       |
-| Storage Backend   | Local Filesystem |
-| Load Testing      | Locust           |
-| Authentication    | JWT (planned)    |
-| Cache             | Redis (planned)  |
+| Component         | Technology                  |
+| ----------------- | --------------------------- |
+| Language          | Python 3                    |
+| API               | FastAPI                     |
+| ORM               | SQLAlchemy                  |
+| Metadata Database | PostgreSQL                  |
+| Storage Backend   | Local Filesystem            |
+| Fault Tolerance   | Experimental Erasure Coding |
+| Load Testing      | Locust                      |
+| Authentication    | JWT (planned)               |
+| Cache             | Redis (planned)             |
 
 ---
 
 # Project Structure
 
-```
+```text
 lattice/
 
 ├── app/
 │   ├── api/
-│   ├── storage_engine/
+│   ├── storage/
+│   │   ├── shard_manager.py
+│   │   ├── disk_manager.py
+│   │   ├── erasure.py
+│   │   └── reconstruction.py
+│   │
 │   ├── models/
 │   ├── database.py
 │   └── utils/
@@ -75,7 +119,10 @@ lattice/
 ├── storage/
 │   ├── disk1/
 │   ├── disk2/
-│   └── disk3/
+│   ├── disk3/
+│   ├── disk4/
+│   ├── disk5/
+│   └── disk6/
 │
 ├── benchmarks/
 ├── tests/
@@ -85,21 +132,30 @@ lattice/
 
 ---
 
-# Storage Engine
+# Metadata Architecture
 
-Objects are distributed across multiple storage disks using a round-robin placement strategy.
+## Objects
 
-Example:
+Stores logical object metadata:
 
-```
-Upload 1 → disk1
-Upload 2 → disk2
-Upload 3 → disk3
-Upload 4 → disk1
-Upload 5 → disk2
-```
+* Object ID
+* Bucket ID
+* Object Name
+* Object Size
+* SHA-256 Checksum
 
-Metadata stored in PostgreSQL records the physical location of every object, allowing retrieval independent of storage placement.
+## Object Shards
+
+Stores shard placement information:
+
+* Object ID
+* Shard Index
+* Disk Name
+* File Path
+* Parity Flag
+* Shard Size
+
+This separation allows storage placement strategies to evolve without affecting API behavior.
 
 ---
 
@@ -108,28 +164,29 @@ Metadata stored in PostgreSQL records the physical location of every object, all
 ## v1 (SQLite)
 
 * Metadata backend: SQLite
-* Upload failures under concurrent load due to SQLite write locking
+* Concurrent upload failures due to database locking
 * Baseline implementation
 
 ## v2 (PostgreSQL)
 
 * Migrated metadata layer to PostgreSQL
-* Eliminated concurrent write-lock failures
-* Reduced upload latency significantly
+* Eliminated SQLite write-lock bottlenecks
 * Improved concurrent upload performance
+* Reduced request failure rates
 
-Performance benchmarks are available in the `benchmarks/` directory.
+Performance benchmark results are available in the `benchmarks/` directory.
 
 ---
 
 # Design Principles
 
 * Separation of metadata and object storage
-* Modular storage engine design
-* Storage placement abstraction
-* Extensible architecture
+* Storage engine abstraction
+* Fault-tolerant architecture
+* Extensible storage placement strategies
 * S3-inspired object model
 * Performance-driven development
+* Distributed-systems learning focus
 
 ---
 
@@ -141,14 +198,18 @@ Performance benchmarks are available in the `benchmarks/` directory.
 * Object CRUD operations
 * PostgreSQL metadata engine
 * Multi-disk storage abstraction
-* Round-robin object placement
+* Object sharding
+* Parity generation
+* Shard reconstruction
+* Single-shard recovery
 * Performance benchmarking
 
 ## In Progress
 
-* Replicated object storage
-* Read failover
+* Upload pipeline integration with erasure coding
+* Download reconstruction pipeline
 * Disk health monitoring
+* Automatic shard recovery
 
 ## Planned
 
@@ -159,17 +220,21 @@ Performance benchmarks are available in the `benchmarks/` directory.
 * Deduplication
 * Presigned URLs
 * S3-compatible client support
-* AI-powered semantic object retrieval (RAG)
+* Background healing jobs
 * Distributed multi-node storage
+* Cross-node replication
 * Kubernetes deployment
+* AI-powered semantic object retrieval (RAG)
 
 ---
 
 # Motivation
 
-Lattice was created as a systems engineering project to understand how modern object storage platforms separate metadata management from physical storage while providing scalability, fault tolerance, and efficient object retrieval.
+Lattice was created as a systems engineering project to understand how modern object storage platforms separate metadata management from physical storage while maintaining durability, scalability, and fault tolerance.
 
-The long-term objective is to evolve Lattice into a distributed storage engine featuring replication, erasure coding, and intelligent object retrieval while remaining compatible with standard S3 workflows.
+Rather than relying on existing storage frameworks, Lattice implements core storage concepts directly, including object sharding, parity-based recovery, metadata management, and multi-disk placement.
+
+The long-term vision is to evolve Lattice into a distributed object storage engine with fault-tolerant storage, S3 compatibility, and intelligent semantic retrieval capabilities.
 
 ---
 
