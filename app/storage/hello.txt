@@ -1,0 +1,4 @@
+implementing shard divison
+
+
+-> ABCDEFGHIJKLMNOPQRSTUVXWZ
