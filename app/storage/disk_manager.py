@@ -2,20 +2,21 @@
 
 from pathlib import Path
 
-DISKS = [
-    "storage/disk1",
-    "storage/disk2",
-    "storage/disk3",
-    "storage/disk4",
-    "storage/disk5",
-    "storage/disk6",
-]
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
+DISKS = [
+    PROJECT_ROOT / "storage" / "disk1",
+    PROJECT_ROOT / "storage" / "disk2",
+    PROJECT_ROOT / "storage" / "disk3",
+    PROJECT_ROOT / "storage" / "disk4",
+    PROJECT_ROOT / "storage" / "disk5",
+    PROJECT_ROOT / "storage" / "disk6",
+]
 
 def write_shard(filename, shard_index, data):
     disk = DISKS[shard_index]
 
-    shard_path = Path(disk) / f"{filename}.part{shard_index}"
+    shard_path = disk / f"{filename}.part{shard_index}"
 
     print("Writing to:", shard_path)
 
@@ -29,9 +30,7 @@ def write_shard(filename, shard_index, data):
 def read_shard(filename, shard_index):
     disk = DISKS[shard_index]
 
-    shard_path = Path(disk) / f"{filename}.part{shard_index}"
-
-    print("Trying to read:", shard_path.resolve())
+    shard_path = disk / f"{filename}.part{shard_index}"
 
     with open(shard_path, "rb") as f:
         return f.read()
