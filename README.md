@@ -81,6 +81,7 @@ disk2 → data1
 disk3 → data2
 disk4 → data3
 disk5 → parity
+disk6 → parity
 ```
 
 Workflow:
