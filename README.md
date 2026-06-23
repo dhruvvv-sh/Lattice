@@ -70,7 +70,7 @@ Objects are processed through the storage engine, split into shards, protected u
 Lattice currently implements an experimental parity-based storage architecture.
 
 ```text
-4 Data Shards + XOR Parity
+4 Data Shards + XOR Parity (the disk 6 is currently holding a duplciate parity which will be fixed Reed-Solomon erasure coding :) )
 ```
 
 Example:
