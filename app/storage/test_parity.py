@@ -30,3 +30,22 @@ for idx, parity in enumerate(parity_shards):
     path = write_shard("Sample.pdf", disk_index, parity)
 
     print(f"Stored parity shard {idx} -> {path}")
+
+
+
+#Success ->
+#output 
+# Writing to: storage\disk1\Sample.pdf.part0
+# Stored data shard 0 -> storage\disk1\Sample.pdf.part0
+# Writing to: storage\disk2\Sample.pdf.part1
+# Stored data shard 1 -> storage\disk2\Sample.pdf.part1
+# Writing to: storage\disk3\Sample.pdf.part2
+# Stored data shard 2 -> storage\disk3\Sample.pdf.part2
+# Writing to: storage\disk4\Sample.pdf.part3
+# Stored data shard 3 -> storage\disk4\Sample.pdf.part3
+# Parity generated!
+# Parity count: 2
+# Writing to: storage\disk5\Sample.pdf.part4
+# Stored parity shard 0 -> storage\disk5\Sample.pdf.part4
+# Writing to: storage\disk6\Sample.pdf.part5
+# Stored parity shard 1 -> storage\disk6\Sample.pdf.part5

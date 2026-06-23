@@ -3,12 +3,12 @@
 from pathlib import Path
 
 DISKS = [
-    "app/storage/disk1",
-    "app/storage/disk2",
-    "app/storage/disk3",
-    "app/storage/disk4",
-    "app/storage/disk5",
-    "app/storage/disk6",
+    "storage/disk1",
+    "storage/disk2",
+    "storage/disk3",
+    "storage/disk4",
+    "storage/disk5",
+    "storage/disk6",
 ]
 
 
