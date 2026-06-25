@@ -63,7 +63,9 @@
 
 ## Future Optimization Targets
 
-* Migrate metadata storage from SQLite to PostgreSQL.
+Status note: the PostgreSQL migration listed below was completed in Lattice v2.0. The remaining items are still useful optimization targets.
+
+* Migrate metadata storage from SQLite to PostgreSQL. Completed in v2.0.
 * Introduce Redis caching for metadata lookups.
 * Implement multipart uploads for large files.
 * Add asynchronous file I/O where applicable.
