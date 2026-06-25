@@ -1,7 +1,8 @@
 # Reed-Solomon Storage Test Cases
 
 These checks validate the current `4+2` Reed-Solomon erasure coding flow in
-`app/storage/erasure.py`.
+`app/storage/erasure.py`. This storage layer is currently a prototype under
+`app/storage`; it is not yet wired into the FastAPI upload/download path.
 
 ## Test Setup
 
@@ -35,6 +36,12 @@ parity_shards 2 [9, 9]
 | 4 | Two parity shards | Rebuild parity from complete data | `case_4_two_parity_missing ok` |
 | 5 | Three total shards | Fail because `4+2` can recover only two erasures | `case_5_three_missing failed_as_expected Too many missing shards to recover` |
 | 6 | Padded reconstruction | Trim reconstructed bytes to original size | `case_6_reconstruction_trim ok` |
+
+## Current Meaning
+
+The Reed-Solomon layer can tolerate up to two missing shards in a six-shard
+stripe. A missing shard may be either a data shard or a parity shard. More than
+two missing shards fails by design for a `4+2` layout.
 
 ## Full Output
 
