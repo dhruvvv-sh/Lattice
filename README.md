@@ -99,6 +99,42 @@ Current implementation demonstrates:
 
 ---
 
+# Run With Docker
+
+Build and start the API with PostgreSQL:
+
+```bash
+docker compose --env-file .env.docker up --build
+```
+
+The API will be available at:
+
+```text
+http://localhost:8000
+```
+
+PostgreSQL runs inside Docker with this connection string:
+
+```text
+postgresql://postgres:postgres@localhost:5432/lattice
+```
+
+Uploaded objects are stored in the local `storage/` directory through a bind mount, and database files are stored in the Docker volume `postgres_data`.
+
+To stop the containers:
+
+```bash
+docker compose --env-file .env.docker down
+```
+
+To remove the database volume as well:
+
+```bash
+docker compose --env-file .env.docker down -v
+```
+
+---
+
 # Project Structure
 
 ```text
