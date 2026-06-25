@@ -9,10 +9,11 @@ d2 = None
 d3 = read_shard("Sample.pdf", 3)
 
 p1 = read_shard("Sample.pdf", 4)
+p2 = read_shard("Sample.pdf", 5)
 
 recovered = recover_missing_shard(
     [d0, d1, d2, d3],
-    p1,
+    [p1, p2],
     missing_index=2
 )
 

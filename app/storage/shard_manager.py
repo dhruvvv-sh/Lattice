@@ -20,3 +20,12 @@ def split_bytes(data: bytes, num_shards=4):
         shards.append(shard)
 
     return shards
+
+
+def reconstruct_bytes(shards, original_size=None):
+    data = b"".join(shards)
+
+    if original_size is not None:
+        return data[:original_size]
+
+    return data

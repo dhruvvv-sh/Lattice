@@ -7,4 +7,5 @@ python-dotenv>=1.0.0
 python-multipart>=0.0.9
 pytest>=8.0.0
 locust>=2.30.0
+reedsolo>=1.7.0
 
