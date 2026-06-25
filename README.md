@@ -1,8 +1,11 @@
 # Lattice
 
-Lattice is an S3-inspired object storage engine built with Python, FastAPI, and PostgreSQL. The project explores the internal architecture of modern object storage systems such as Amazon S3, MinIO, and Ceph by implementing their core storage mechanisms from first principles.
+Lattice is an S3-inspired object storage engine built with Python, FastAPI, and PostgreSQL. The project explores how systems such as Amazon S3, MinIO, and Ceph separate metadata from physical object storage while preserving durability, scalability, and fault tolerance.
 
-Rather than functioning as a simple file upload service, Lattice separates metadata management from physical storage and introduces fault-tolerant storage concepts including object sharding, parity generation, disk health monitoring, and parity-based recovery.
+The current project has two active layers:
+
+* A working FastAPI object API backed by PostgreSQL metadata and local filesystem storage.
+* A storage prototype that demonstrates sharding, Reed-Solomon parity, reconstruction, and disk-failure recovery scenarios.
 
 The long-term goal is to evolve Lattice into a distributed, fault-tolerant object storage platform with S3-compatible APIs, background healing, multi-node replication, and AI-powered semantic retrieval.
 
@@ -10,31 +13,28 @@ The long-term goal is to evolve Lattice into a distributed, fault-tolerant objec
 
 # Current Features
 
-### Object Storage
+## Object API
 
-* Bucket creation and management
-* Object upload, download, and deletion
+* Bucket creation, listing, update, and deletion
+* Object upload, download, listing, and deletion
 * PostgreSQL-backed metadata persistence
 * SHA-256 checksum generation
-* Multi-disk storage architecture
-* Concurrent upload support
+* Round-robin whole-file placement across local storage disks
+* Concurrent upload benchmarking with Locust
 
-### Fault Tolerance
+## Storage Prototype
 
-* Object sharding across multiple storage disks
-* XOR parity generation
-* Shard reconstruction
-* Single-shard recovery
-* Disk failure simulation
-* Disk health monitoring
-* Cluster health endpoint
+* Object splitting into 4 data shards
+* Reed-Solomon parity generation with a `4+2` layout
+* Recovery from one or two missing shards
+* Full object reconstruction from data shards
+* Original-size trimming after padded reconstruction
+* Disk health checks and cluster health state
+* Documented Reed-Solomon recovery test cases
 
-### Engineering
+## Current Boundary
 
-* Modular storage engine architecture
-* Separation of metadata and storage layers
-* Performance benchmarking with Locust
-* Extensible foundation for distributed storage
+The Reed-Solomon shard engine exists under `app/storage`, but the API upload/download path under `app/storage_engine` still stores each uploaded object as a whole file on one selected disk. The next major integration step is to route API uploads through the shard engine and persist shard placement in the `object_shards` table.
 
 ---
 
@@ -42,90 +42,88 @@ The long-term goal is to evolve Lattice into a distributed, fault-tolerant objec
 
 ```text
                     Client
-                       │
-                       ▼
+                       |
+                       v
                  FastAPI Server
-                       │
-                       ▼
-                Storage Engine
-                       │
-        ┌──────────────┼──────────────┐
-        ▼              ▼              ▼
-  Shard Manager   Erasure Engine   Disk Manager
-        │              │              │
-        └──────┬───────┴───────┬──────┘
-               ▼               ▼
-        PostgreSQL        Storage Disks
-          Metadata
+                       |
+                       v
+              Object API / Metadata
+                       |
+          +------------+-------------+
+          |                          |
+          v                          v
+  Whole-file Storage Path     Shard Prototype
+  app/storage_engine          app/storage
+          |                          |
+          v                          v
+   Local storage disks       Reed-Solomon 4+2
+          |
+          v
+      PostgreSQL
 ```
 
-The API layer remains independent of the underlying storage implementation.
-
-Objects are processed through the storage engine, split into shards, protected using parity information, and distributed across multiple storage disks. Metadata describing object placement and storage details is stored separately in PostgreSQL.
+The API layer currently handles production-style bucket/object flows. The shard prototype models the MinIO-inspired fault-tolerant storage layer that will be integrated into the API path next.
 
 ---
 
 # Fault-Tolerant Storage Model
 
-Lattice currently implements an experimental parity-based storage architecture.
+The storage prototype now uses Reed-Solomon erasure coding:
 
 ```text
-4 Data Shards + XOR Parity (the disk 6 is currently holding a duplciate parity which will be fixed Reed-Solomon erasure coding :) )
+4 Data Shards + 2 Parity Shards
 ```
 
-Example:
+Example placement:
 
 ```text
-disk1 → data0
-disk2 → data1
-disk3 → data2
-disk4 → data3
-disk5 → parity
-disk6 → parity
+disk1 -> data0
+disk2 -> data1
+disk3 -> data2
+disk4 -> data3
+disk5 -> parity0
+disk6 -> parity1
 ```
 
-Workflow:
+Supported recovery cases:
 
-```text
-Object
-   ↓
-Split Into Shards
-   ↓
-Generate Parity
-   ↓
-Distribute Across Disks
-   ↓
-Detect Failure
-   ↓
-Recover Missing Shard
-```
+* One missing data shard
+* Two missing data shards
+* One missing data shard plus one missing parity shard
+* Two missing parity shards
+* Failure when more than two total shards are missing
 
-Current implementation supports recovery of a single missing shard using parity information.
-
-Future releases will replace the current XOR parity implementation with Reed-Solomon erasure coding for stronger fault tolerance and multi-shard recovery.
+Detailed results are documented in `app/storage/reed_solomon_test_cases.md`.
 
 ---
 
 # Storage Simulations
 
-Lattice includes fault-tolerance simulations used to validate storage reliability.
+The storage scripts validate the Reed-Solomon layer independently from the API.
 
-### Shard Recovery Simulation
+## Reed-Solomon Verification
 
-1. Split object into multiple data shards
-2. Generate parity information
-3. Simulate shard loss
-4. Recover missing shard
-5. Verify integrity using SHA-256 hashes
-
-Example Verification:
+The current verification covers:
 
 ```text
-Original :
-4aa645665dc00977940383881064d8e35e401dfce9158a5e3686b2d94cd09dcc
+data_size 36
+data_shards 4 [9, 9, 9, 9]
+parity_shards 2 [9, 9]
+case_1_single_data_missing ok
+case_2_data_and_parity_missing ok
+case_3_two_data_missing ok
+case_4_two_parity_missing ok
+case_5_three_missing failed_as_expected Too many missing shards to recover
+case_6_reconstruction_trim ok
+```
 
-Recovered:
-4aa645665dc00977940383881064d8e35e401dfce9158a5e3686b2d94cd09dcc
+## Sample PDF Recovery
+
+The sample shard recovery flow also verifies a recovered shard with SHA-256:
+
+```text
+Original : 4aa645665dc00977940383881064d8e35e401dfce9158a5e3686b2d94cd09dcc
+Recovered: 4aa645665dc00977940383881064d8e35e401dfce9158a5e3686b2d94cd09dcc
 ```
 
 Result:
@@ -135,40 +133,22 @@ Recovery Successful
 Integrity Verified
 ```
 
-### Disk Health Monitoring
-
-Lattice periodically checks storage disks and exposes cluster health information.
-
-Example:
-
-```json
-{
-  "disk1": "healthy",
-  "disk2": "healthy",
-  "disk3": "dead",
-  "disk4": "healthy",
-  "disk5": "healthy",
-  "disk6": "healthy"
-}
-```
-
-This serves as the foundation for future automatic healing and background repair systems.
-
 ---
 
 # Technology Stack
 
-| Component         | Technology          |
-| ----------------- | ------------------- |
-| Language          | Python 3            |
-| API               | FastAPI             |
-| ORM               | SQLAlchemy          |
-| Metadata Database | PostgreSQL          |
-| Storage Backend   | Local Filesystem    |
-| Fault Tolerance   | XOR Parity Recovery |
-| Load Testing      | Locust              |
-| Authentication    | JWT (Planned)       |
-| Cache             | Redis (Planned)     |
+| Component | Technology |
+| --- | --- |
+| Language | Python 3 |
+| API | FastAPI |
+| ORM | SQLAlchemy |
+| Metadata Database | PostgreSQL |
+| Storage Backend | Local Filesystem |
+| Erasure Coding | Reed-Solomon via `reedsolo` |
+| Load Testing | Locust |
+| Container Runtime | Docker Compose |
+| Authentication | JWT (planned) |
+| Cache | Redis (planned) |
 
 ---
 
@@ -212,99 +192,95 @@ docker compose --env-file .env.docker down -v
 
 ```text
 lattice/
-
-├── app/
-│   ├── api/
-│   │   ├── buckets.py
-│   │   ├── objects.py
-│   │   └── cluster.py
-│   │
-│   ├── storage/
-│   │   ├── shard_manager.py
-│   │   ├── disk_manager.py
-│   │   ├── erasure.py
-│   │   ├── reconstruction.py
-│   │   ├── health_checker.py
-│   │   ├── heartbeat.py
-│   │   └── cluster_state.py
-│   │
-│   ├── models/
-│   ├── database.py
-│   └── utils/
-│
-├── storage/
-│   ├── disk1/
-│   ├── disk2/
-│   ├── disk3/
-│   ├── disk4/
-│   ├── disk5/
-│   └── disk6/
-│
-├── benchmarks/
-├── tests/
-├── simulationoutputs.md
-├── README.md
-└── requirements.txt
+|-- app/
+|   |-- api/
+|   |   |-- buckets.py
+|   |   |-- objects.py
+|   |   `-- cluster.py
+|   |-- storage/
+|   |   |-- shard_manager.py
+|   |   |-- disk_manager.py
+|   |   |-- erasure.py
+|   |   |-- reconstruction.py
+|   |   |-- health_check.py
+|   |   |-- heartbeat.py
+|   |   |-- cluster_state.py
+|   |   |-- storagestructure.md
+|   |   `-- reed_solomon_test_cases.md
+|   |-- storage_engine/
+|   |   |-- writer.py
+|   |   |-- reader.py
+|   |   |-- disk_selector.py
+|   |   |-- checksum.py
+|   |   `-- delete.py
+|   |-- database.py
+|   |-- models.py
+|   `-- schemas.py
+|-- benchmark/
+|   |-- benchmarks_locust_v1.md
+|   `-- benchmarks_locust_v2.md
+|-- storage/
+|   |-- disk1/
+|   |-- disk2/
+|   |-- disk3/
+|   |-- disk4/
+|   |-- disk5/
+|   `-- disk6/
+|-- Dockerfile
+|-- docker-compose.yml
+|-- simulationoutputs.md
+|-- README.md
+`-- requirements.txt
 ```
 
 ---
 
 # Metadata Architecture
 
-## Objects
+## Objects Table
 
 Stores logical object metadata:
 
 * Object ID
 * Bucket ID
-* Object Name
-* Object Size
-* SHA-256 Checksum
+* Object name
+* Whole-file path
+* Disk name
+* Object size
+* Content type
+* SHA-256 checksum
 
-## Future Shard Metadata Layer
+## Object Shards Table
 
-Planned metadata for shard tracking:
+The `ObjectShard` model exists for the upcoming shard-integrated API path:
 
 * Object ID
-* Shard Index
-* Disk Name
-* File Path
-* Parity Flag
-* Shard Size
+* Shard index
+* Disk name
+* Shard path
+* Parity flag
+* Shard size
 
-This abstraction enables future storage placement strategies, replication policies, and automatic repair workflows.
+This table is the bridge between the current API and the Reed-Solomon storage layer that will be integrated next.
 
 ---
 
 # Benchmark Evolution
 
-## Version 1 — SQLite
+## Version 1: SQLite
 
 * SQLite metadata backend
 * Concurrent upload failures due to database locking
 * Initial storage engine implementation
 
-## Version 2 — PostgreSQL
+## Version 2: PostgreSQL
 
 * Migrated metadata layer to PostgreSQL
 * Eliminated SQLite write-lock bottlenecks
 * Improved concurrent upload performance
 * Reduced request failure rates
 
-Performance benchmark results are available in the `benchmarks/` directory.
-
----
-
-# Design Principles
-
-* Separation of metadata and object storage
-* Modular storage engine architecture
-* Fault-tolerant storage design
-* Extensible placement strategies
-* S3-inspired object model
-* Performance-driven development
-* Distributed-systems learning focus
-* Storage-first engineering approach
+Performance benchmark results are available in the `benchmark/` directory.
 
 ---
 
@@ -315,26 +291,26 @@ Performance benchmark results are available in the `benchmarks/` directory.
 * Bucket management
 * Object CRUD operations
 * PostgreSQL metadata engine
-* Multi-disk storage abstraction
-* Object sharding
-* XOR parity generation
-* Shard reconstruction
-* Single-shard recovery
+* Docker Compose setup for API plus PostgreSQL
+* Multi-disk storage directories
+* Object sharding prototype
+* Reed-Solomon parity generation
+* One- and two-shard recovery in the storage prototype
+* Full shard reconstruction helper
 * Disk health monitoring
 * Cluster health endpoint
-* Performance benchmarking
+* Locust performance benchmarking
 
 ## In Progress
 
-* Upload pipeline integration with parity storage
-* Download reconstruction pipeline
+* Upload pipeline integration with Reed-Solomon shard storage
+* Download reconstruction pipeline for API reads
+* Persisting shard placement metadata during uploads
 * Automatic shard recovery
-* Shard placement metadata
 * Background repair workflows
 
 ## Planned
 
-* Reed-Solomon erasure coding
 * Multipart uploads
 * Redis metadata caching
 * Object versioning
@@ -342,7 +318,6 @@ Performance benchmark results are available in the `benchmarks/` directory.
 * Presigned URLs
 * S3-compatible client support
 * Read repair
-* Background healing jobs
 * Distributed multi-node storage
 * Cross-node replication
 * Kubernetes deployment
@@ -354,7 +329,7 @@ Performance benchmark results are available in the `benchmarks/` directory.
 
 Lattice was created as a systems engineering project to understand how modern object storage platforms separate metadata management from physical storage while maintaining durability, scalability, and fault tolerance.
 
-Instead of relying on existing storage frameworks, Lattice implements core storage concepts directly, including object sharding, parity-based recovery, metadata management, disk health monitoring, and multi-disk placement.
+Instead of relying on existing storage frameworks for the whole system, Lattice implements the core object-storage concepts directly: bucket/object APIs, metadata persistence, local disk placement, sharding, Reed-Solomon parity, disk health checks, and recovery simulations.
 
 The long-term vision is to evolve Lattice into a distributed object storage engine capable of fault-tolerant storage, S3 compatibility, automatic healing, and intelligent semantic retrieval.
 
