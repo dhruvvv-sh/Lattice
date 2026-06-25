@@ -65,9 +65,10 @@
 
 ## Future Optimization Targets
 
-* Multi-disk object placement
-* Replication and failover
-* Erasure coding
+* API integration with Reed-Solomon shard storage
+* Shard metadata persistence in `object_shards`
+* Disk health-aware placement
+* Read repair and background healing
 * Redis metadata caching
 * Multipart uploads
 * Asynchronous file I/O
