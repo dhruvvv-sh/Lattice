@@ -2,10 +2,11 @@
 
 Lattice is an S3-inspired object storage engine built with Python, FastAPI, and PostgreSQL. The project explores how systems such as Amazon S3, MinIO, and Ceph separate metadata from physical object storage while preserving durability, scalability, and fault tolerance.
 
-The current project has two active layers:
+The current project has three active layers:
 
-* A working FastAPI object API backed by PostgreSQL metadata and local filesystem storage.
-* A storage prototype that demonstrates sharding, Reed-Solomon parity, reconstruction, and disk-failure recovery scenarios.
+* A working FastAPI object API backed by SQLAlchemy metadata and local filesystem storage.
+* A sharded storage engine that routes API uploads through Reed-Solomon `4+2` erasure coding.
+* A cluster and placement layer that models storage nodes, storage targets, placement decisions, and persisted placement manifests.
 
 The long-term goal is to evolve Lattice into a distributed, fault-tolerant object storage platform with S3-compatible APIs, background healing, multi-node replication, and AI-powered semantic retrieval.
 
@@ -19,22 +20,37 @@ The long-term goal is to evolve Lattice into a distributed, fault-tolerant objec
 * Object upload, download, listing, and deletion
 * PostgreSQL-backed metadata persistence
 * SHA-256 checksum generation
-* Round-robin whole-file placement across local storage disks
+* Sharded object placement through the placement engine
+* Download reconstruction from shard metadata
+* Recovery during download when up to two shards are missing
 * Concurrent upload benchmarking with Locust
 
-## Storage Prototype
+## Storage Engine
 
 * Object splitting into 4 data shards
 * Reed-Solomon parity generation with a `4+2` layout
+* API upload path writes 4 data shards and 2 parity shards
+* API download path reconstructs objects from shard metadata
 * Recovery from one or two missing shards
 * Full object reconstruction from data shards
 * Original-size trimming after padded reconstruction
+* Persisted `object_shards` metadata
+* Persisted placement manifest per object
 * Disk health checks and cluster health state
 * Documented Reed-Solomon recovery test cases
 
+## Cluster and Placement
+
+* `ClusterManager` registers storage nodes and storage targets
+* `StorageTarget` models node, disk, capacity, health, online status, and storage type
+* `PlacementStrategy` implementations operate on storage targets, not raw disks
+* Built-in strategies include balanced, capacity-aware, and random placement
+* `PlacementDecision` records shard destination node, disk, path, and replica metadata
+* Custom placement strategies can be injected directly or loaded by environment variable
+
 ## Current Boundary
 
-The Reed-Solomon shard engine exists under `app/storage`, but the API upload/download path under `app/storage_engine` still stores each uploaded object as a whole file on one selected disk. The next major integration step is to route API uploads through the shard engine and persist shard placement in the `object_shards` table.
+Lattice currently runs as a single API process with local storage targets. The architecture now has the right seams for multi-node storage, but actual node-to-node transfer, replication, background repair, and rebalancing are still planned work.
 
 ---
 
@@ -49,20 +65,23 @@ The Reed-Solomon shard engine exists under `app/storage`, but the API upload/dow
                        v
               Object API / Metadata
                        |
-          +------------+-------------+
-          |                          |
-          v                          v
-  Whole-file Storage Path     Shard Prototype
-  app/storage_engine          app/storage
-          |                          |
-          v                          v
-   Local storage disks       Reed-Solomon 4+2
-          |
-          v
-      PostgreSQL
+                       v
+               Placement Engine
+                       |
+                       v
+                Cluster Manager
+                       |
+                       v
+              Storage Targets
+                       |
+                       v
+       Reed-Solomon 4+2 Sharded Storage
+                       |
+                       v
+                  PostgreSQL
 ```
 
-The API layer currently handles production-style bucket/object flows. The shard prototype models the MinIO-inspired fault-tolerant storage layer that will be integrated into the API path next.
+The API layer now uses the sharded path for uploads and downloads. The cluster manager is the source of truth for candidate storage targets, while placement strategies decide where each shard should be written.
 
 ---
 
@@ -74,15 +93,15 @@ The storage prototype now uses Reed-Solomon erasure coding:
 4 Data Shards + 2 Parity Shards
 ```
 
-Example placement:
+Example logical placement:
 
 ```text
-disk1 -> data0
-disk2 -> data1
-disk3 -> data2
-disk4 -> data3
-disk5 -> parity0
-disk6 -> parity1
+node-1/disk1 -> data0
+node-1/disk2 -> data1
+node-1/disk3 -> data2
+node-1/disk4 -> data3
+node-1/disk5 -> parity0
+node-1/disk6 -> parity1
 ```
 
 Supported recovery cases:
@@ -97,9 +116,9 @@ Detailed results are documented in `app/storage/reed_solomon_test_cases.md`.
 
 ---
 
-# Storage Simulations
+# Verification
 
-The storage scripts validate the Reed-Solomon layer independently from the API.
+The automated tests validate both the Reed-Solomon storage layer and the API-integrated sharded path.
 
 ## Reed-Solomon Verification
 
@@ -133,6 +152,25 @@ Recovery Successful
 Integrity Verified
 ```
 
+## Current Test Suite
+
+The current pytest suite covers:
+
+* Cluster manager node and storage-target registration
+* Healthy and offline target filtering
+* Balanced, capacity-aware, and random placement strategy behavior
+* Custom placement strategy compatibility
+* API upload through sharded storage
+* Placement manifest persistence
+* Download recovery after one data shard and one parity shard are missing
+* Object delete cleanup for shard files and metadata
+
+Latest verification:
+
+```text
+10 passed
+```
+
 ---
 
 # Technology Stack
@@ -145,6 +183,7 @@ Integrity Verified
 | Metadata Database | PostgreSQL |
 | Storage Backend | Local Filesystem |
 | Erasure Coding | Reed-Solomon via `reedsolo` |
+| Placement | Pluggable placement strategies |
 | Load Testing | Locust |
 | Container Runtime | Docker Compose |
 | Authentication | JWT (planned) |
@@ -197,6 +236,7 @@ lattice/
 |   |   |-- buckets.py
 |   |   |-- objects.py
 |   |   `-- cluster.py
+|   |-- cluster_manager.py
 |   |-- storage/
 |   |   |-- shard_manager.py
 |   |   |-- disk_manager.py
@@ -208,6 +248,8 @@ lattice/
 |   |   |-- storagestructure.md
 |   |   `-- reed_solomon_test_cases.md
 |   |-- storage_engine/
+|   |   |-- placement.py
+|   |   |-- sharded.py
 |   |   |-- writer.py
 |   |   |-- reader.py
 |   |   |-- disk_selector.py
@@ -219,6 +261,11 @@ lattice/
 |-- benchmark/
 |   |-- benchmarks_locust_v1.md
 |   `-- benchmarks_locust_v2.md
+|-- tests/
+|   |-- test_cluster_manager.py
+|   |-- test_objects_api.py
+|   |-- test_placement.py
+|   `-- test_sharded_storage.py
 |-- storage/
 |   |-- disk1/
 |   |-- disk2/
@@ -244,24 +291,35 @@ Stores logical object metadata:
 * Object ID
 * Bucket ID
 * Object name
-* Whole-file path
-* Disk name
+* Logical sharded path
+* Storage mode
 * Object size
 * Content type
 * SHA-256 checksum
 
 ## Object Shards Table
 
-The `ObjectShard` model exists for the upcoming shard-integrated API path:
+The `ObjectShard` model stores physical shard metadata:
 
 * Object ID
 * Shard index
+* Node ID
+* Disk ID
 * Disk name
 * Shard path
 * Parity flag
 * Shard size
+* Shard checksum
 
-This table is the bridge between the current API and the Reed-Solomon storage layer that will be integrated next.
+## Object Placement Manifests Table
+
+The `ObjectPlacementManifest` model stores an object-level placement document:
+
+* Object ID
+* Placement strategy name
+* Manifest JSON with shard layout, node, disk, path, type, size, checksum, and future replica metadata
+
+The manifest is intended to support future recovery, rebalancing, replication, and cluster visualization workflows.
 
 ---
 
@@ -300,17 +358,26 @@ Performance benchmark results are available in the `benchmark/` directory.
 * Disk health monitoring
 * Cluster health endpoint
 * Locust performance benchmarking
-
-## In Progress
-
 * Upload pipeline integration with Reed-Solomon shard storage
 * Download reconstruction pipeline for API reads
 * Persisting shard placement metadata during uploads
+* Cluster manager for node and storage-target inventory
+* Pluggable placement engine
+* Placement decision and manifest generation
+* API-level tests for sharded upload/download/delete
+
+## In Progress
+
 * Automatic shard recovery
 * Background repair workflows
 
 ## Planned
 
+* Node-to-node shard transfer
+* Multi-node cluster deployment
+* Rack-aware and latency-aware placement
+* Replication-aware placement decisions
+* Automatic rebalancing
 * Multipart uploads
 * Redis metadata caching
 * Object versioning
@@ -318,7 +385,6 @@ Performance benchmark results are available in the `benchmark/` directory.
 * Presigned URLs
 * S3-compatible client support
 * Read repair
-* Distributed multi-node storage
 * Cross-node replication
 * Kubernetes deployment
 * AI-powered semantic object retrieval (RAG)
@@ -329,7 +395,7 @@ Performance benchmark results are available in the `benchmark/` directory.
 
 Lattice was created as a systems engineering project to understand how modern object storage platforms separate metadata management from physical storage while maintaining durability, scalability, and fault tolerance.
 
-Instead of relying on existing storage frameworks for the whole system, Lattice implements the core object-storage concepts directly: bucket/object APIs, metadata persistence, local disk placement, sharding, Reed-Solomon parity, disk health checks, and recovery simulations.
+Instead of relying on existing storage frameworks for the whole system, Lattice implements the core object-storage concepts directly: bucket/object APIs, metadata persistence, sharded placement, Reed-Solomon parity, disk health checks, placement manifests, and recovery simulations.
 
 The long-term vision is to evolve Lattice into a distributed object storage engine capable of fault-tolerant storage, S3 compatibility, automatic healing, and intelligent semantic retrieval.
 
