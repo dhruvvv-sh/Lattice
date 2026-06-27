@@ -1,6 +1,6 @@
 # Lattice Storage Simulation Outputs
 
-This file records the current storage simulation results for the Reed-Solomon shard prototype.
+This file records the current storage verification results for the Reed-Solomon layer and the API-integrated sharded storage path.
 
 ---
 
@@ -92,8 +92,45 @@ SHA-256 hashes match.
 
 ---
 
-# Current Integration State
+# API-Integrated Sharded Storage
 
-The Reed-Solomon simulation is working in `app/storage`.
+The FastAPI object path now uses the sharded storage engine for uploads and downloads.
 
-The FastAPI upload/download path still uses `app/storage_engine`, which stores each uploaded object as a whole file on one selected disk. The next step is to connect the API path to the shard engine and persist shard placement in the `object_shards` table.
+Verified behavior:
+
+```text
+upload object
+create 4 data shards
+create 2 parity shards
+persist object_shards rows
+persist object_placement_manifests row
+delete one data shard
+delete one parity shard
+download object successfully
+delete object
+clean shard files and metadata
+```
+
+Current automated result:
+
+```text
+10 passed
+```
+
+---
+
+# Cluster and Placement Verification
+
+The cluster-manager and placement tests verify:
+
+```text
+register storage nodes
+register storage targets
+filter unhealthy targets
+filter offline nodes
+generate PlacementDecision objects
+generate placement manifest JSON
+support custom placement strategies
+```
+
+The default local cluster still maps to local disk directories, but placement now operates on `StorageTarget` objects rather than direct disk indexes.
