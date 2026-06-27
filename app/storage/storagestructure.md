@@ -1,23 +1,27 @@
 # Lattice Storage Engine Architecture
 
-This document describes the current storage design and the next integration target.
+This document describes the current sharded storage design and the cluster-aware placement foundation.
 
 ---
 
 # Current State
 
-Lattice currently has two storage paths:
+Lattice now uses the sharded storage path for API uploads and downloads.
 
 | Layer | Location | State |
 | --- | --- | --- |
-| API storage path | `app/storage_engine` | Active for FastAPI uploads/downloads; stores each object as a whole file on one selected disk |
-| Shard prototype | `app/storage` | Implements sharding, Reed-Solomon parity, reconstruction, and recovery simulations |
+| Object API | `app/api/objects.py` | Accepts uploads, downloads, listings, and deletes |
+| Storage engine | `app/storage_engine/sharded.py` | Splits objects, writes shards, reconstructs downloads |
+| Placement engine | `app/storage_engine/placement.py` | Chooses storage targets through pluggable strategies |
+| Cluster manager | `app/cluster_manager.py` | Tracks storage nodes and storage targets |
+| Reed-Solomon engine | `app/storage/erasure.py` | Generates parity and recovers missing shards |
+| Metadata | `app/models.py` | Stores objects, shards, and placement manifests |
 
-The immediate goal is to connect the shard prototype to the API storage path.
+The older whole-file writer still exists in `app/storage_engine/writer.py`, but the active object API upload path uses Reed-Solomon sharding.
 
 ---
 
-# Current API Upload Flow
+# API Upload Flow
 
 ```text
 Client
@@ -26,43 +30,9 @@ Client
   v
 FastAPI API
   |
-  | Validate bucket
-  v
-app/storage_engine/writer.py
-  |
-  | Select disk with round-robin
-  v
-storage/diskN/bucket_{bucket_id}/filename
-  |
-  | Store object metadata
-  v
-PostgreSQL objects table
-```
-
-Current behavior:
-
-* The whole uploaded file is saved on one disk.
-* Metadata is written to the `objects` table.
-* The Reed-Solomon shard engine is not yet used by this path.
-
----
-
-# Target Sharded Upload Flow
-
-```text
-Client
-  |
-  | POST /objects/upload/{bucket_id}
-  v
-FastAPI API
-  |
-  | Validate bucket
+  | Validate bucket and read uploaded bytes
   v
 Storage Engine
-  |
-  | Read uploaded bytes
-  v
-Shard Manager
   |
   | Split object into 4 data shards
   v
@@ -70,20 +40,28 @@ Erasure Engine
   |
   | Generate 2 Reed-Solomon parity shards
   v
-Disk Manager
+Cluster Manager
   |
-  | Write data0, data1, data2, data3, parity0, parity1
+  | Return available StorageTarget entries
   v
-PostgreSQL
+Placement Strategy
   |
-  | Store object row and object_shards rows
+  | Return PlacementDecision entries
+  v
+Storage Engine
+  |
+  | Write shards to selected targets
+  v
+Metadata
+  |
+  | Store object, shard rows, and placement manifest
   v
 Return success response
 ```
 
 ---
 
-# Target Download Flow
+# API Download Flow
 
 ```text
 Client
@@ -96,7 +74,7 @@ FastAPI API
   v
 Storage Engine
   |
-  | Read available shards
+  | Read available shards from recorded paths
   v
 Erasure Engine
   |
@@ -106,28 +84,28 @@ Shard Manager
   |
   | Reconstruct bytes and trim to original size
   v
-Stream object to client
+Return object bytes to client
 ```
 
 ---
 
 # Reed-Solomon Fault Tolerance Model
 
-The prototype uses a `4+2` Reed-Solomon layout:
+Lattice currently uses a `4+2` Reed-Solomon layout:
 
 ```text
 4 data shards + 2 parity shards
 ```
 
-Example placement:
+Example logical placement:
 
 ```text
-disk1 -> data0
-disk2 -> data1
-disk3 -> data2
-disk4 -> data3
-disk5 -> parity0
-disk6 -> parity1
+node-1/disk1 -> data0
+node-1/disk2 -> data1
+node-1/disk3 -> data2
+node-1/disk4 -> data3
+node-1/disk5 -> parity0
+node-1/disk6 -> parity1
 ```
 
 Recovery support:
@@ -140,99 +118,197 @@ Recovery support:
 
 ---
 
-# Storage Components
+# Cluster Manager
 
-## `shard_manager.py`
-
-Responsibilities:
-
-* Split bytes into equal-sized data shards.
-* Pad the final shard when needed.
-* Reconstruct bytes by joining data shards.
-* Trim reconstructed data back to the original object size when provided.
-
-## `erasure.py`
+`app/cluster_manager.py` is the source of truth for storage inventory.
 
 Responsibilities:
 
-* Generate Reed-Solomon parity shards.
-* Recover missing data or parity shards.
-* Enforce the `4+2` recovery limit.
+* Register storage nodes
+* Remove storage nodes
+* Track node health and online status
+* Register storage targets
+* Remove storage targets
+* Track capacity, free space, used bytes, storage type, region, rack, and latency fields
+* Return filtered healthy and online storage targets to the placement engine
 
-## `disk_manager.py`
+The current local implementation bootstraps one node:
 
-Responsibilities:
+```text
+node-1
+  disk1
+  disk2
+  disk3
+  disk4
+  disk5
+  disk6
+```
 
-* Map shard indexes to disk directories.
-* Write shard files to disk.
-* Read shard files from disk.
-* Check whether a shard exists.
+This keeps the single-node development experience simple while preparing the model for real multi-node storage.
 
-## `health_check.py` and `heartbeat.py`
+---
 
-Responsibilities:
+# Placement Engine
 
-* Check whether storage disk directories exist.
-* Verify basic write/read access with heartbeat files.
-* Maintain in-memory cluster health state.
+`app/storage_engine/placement.py` defines the placement contract.
+
+## StorageTarget
+
+Represents a target that can receive a shard:
+
+```text
+node_id
+disk_id
+path
+capacity
+free_space
+healthy
+online
+storage_type
+used_bytes
+region
+rack_id
+latency_ms
+metadata
+```
+
+## PlacementDecision
+
+Represents the plan for one shard:
+
+```text
+shard_id
+node_id
+disk_id
+path
+replica
+metadata
+```
+
+## PlacementStrategy
+
+Strategies receive a `PlacementRequest` and a list of `StorageTarget` objects.
+
+Built-in strategies:
+
+* `BalancedPlacement`: chooses least-used healthy online targets
+* `CapacityAwarePlacement`: chooses targets with the most free space
+* `RandomPlacement`: chooses random healthy online targets
+
+Custom placement strategies can be injected into `save_object_shards()` or loaded with:
+
+```text
+LATTICE_PLACEMENT_STRATEGY=my_package.MyPlacementStrategy
+```
+
+---
+
+# Placement Manifest
+
+Each uploaded object gets one persisted placement manifest.
+
+Example shape:
+
+```json
+{
+  "strategy": "BalancedPlacement",
+  "layout": [
+    {
+      "shard": 0,
+      "type": "data",
+      "node": "node-1",
+      "disk": "disk1",
+      "path": "storage/disk1/object_1_file.bin.part0",
+      "replica": false,
+      "size": 1024,
+      "checksum": "...",
+      "metadata": {}
+    }
+  ]
+}
+```
+
+Future features will use this manifest for:
+
+* Node recovery
+* Shard reconstruction
+* Read repair
+* Rebalancing
+* Replication
+* Cluster visualization
 
 ---
 
 # Metadata Layer
 
-## `objects` Table
+## `objects`
 
-Currently used by the API path:
+Stores logical object metadata:
 
 * Object ID
 * Bucket ID
 * Object name
-* Whole-file path
-* Disk name
+* Logical sharded path
+* Storage mode
 * Object size
 * Content type
 * Checksum
 * Created timestamp
 
-## `object_shards` Table
+## `object_shards`
 
-Defined and ready for the sharded path:
+Stores physical shard metadata:
 
 * Object ID
 * Shard index
+* Node ID
+* Disk ID
 * Disk name
 * Shard path
 * Parity flag
 * Shard size
+* Shard checksum
 * Created timestamp
 
-The next integration step is to populate this table during API uploads.
+## `object_placement_manifests`
+
+Stores object-level placement metadata:
+
+* Object ID
+* Strategy name
+* Manifest JSON
+* Created timestamp
 
 ---
 
 # Current Verification Results
 
-The Reed-Solomon test cases are documented in `reed_solomon_test_cases.md`.
-
-Summary:
+Automated tests currently cover:
 
 ```text
-case_1_single_data_missing ok
-case_2_data_and_parity_missing ok
-case_3_two_data_missing ok
-case_4_two_parity_missing ok
-case_5_three_missing failed_as_expected Too many missing shards to recover
-case_6_reconstruction_trim ok
+Cluster Manager registration and filtering
+PlacementDecision generation
+Placement manifest generation
+Custom placement strategy compatibility
+Sharded upload/download/delete
+Recovery after one data shard and one parity shard are missing
+Failure when more than two shards are missing
+```
+
+Latest result:
+
+```text
+10 passed
 ```
 
 ---
 
 # Planned Work
 
-* Route API uploads through the shard manager and erasure engine.
-* Persist one `object_shards` row per written shard.
-* Reconstruct API downloads from shard metadata.
-* Add read repair when a missing shard is reconstructed during a read.
-* Skip unhealthy disks during placement.
-* Move script-style checks into automated pytest tests.
-* Add background healing jobs.
+* Add a repair endpoint that rewrites missing recovered shards.
+* Add node-to-node shard transfer.
+* Persist real multi-node cluster state.
+* Add rack-aware and latency-aware placement.
+* Add replication-aware placement decisions.
+* Add automatic rebalancing.
+* Move from `Base.metadata.create_all()` to Alembic migrations.
