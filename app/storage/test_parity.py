@@ -1,35 +1,41 @@
 from pathlib import Path
 
-from shard_manager import split_bytes
-from disk_manager import write_shard
-from erasure import generate_parity
+from app.storage.disk_manager import write_shard
+from app.storage.erasure import generate_parity
+from app.storage.shard_manager import split_bytes
 
-pdf_path = Path(__file__).parent / "Sample.pdf"
 
-with open(pdf_path, "rb") as f:
-    data = f.read()
+def main():
+    pdf_path = Path(__file__).parent / "Sample.pdf"
 
-# Create 4 data shards
-shards = split_bytes(data, 4)
+    with open(pdf_path, "rb") as f:
+        data = f.read()
 
-# Store data shards
-for idx, shard in enumerate(shards):
-    path = write_shard("Sample.pdf", idx, shard)
-    print(f"Stored data shard {idx} -> {path}")
+    # Create 4 data shards
+    shards = split_bytes(data, 4)
 
-# Create parity
-parity_shards = generate_parity(shards)
+    # Store data shards
+    for idx, shard in enumerate(shards):
+        path = write_shard("Sample.pdf", idx, shard)
+        print(f"Stored data shard {idx} -> {path}")
 
-print("Parity generated!")
-print("Parity count:", len(parity_shards))
+    # Create parity
+    parity_shards = generate_parity(shards)
 
-# Store parity shards
-for idx, parity in enumerate(parity_shards):
-    disk_index = idx + 4
+    print("Parity generated!")
+    print("Parity count:", len(parity_shards))
 
-    path = write_shard("Sample.pdf", disk_index, parity)
+    # Store parity shards
+    for idx, parity in enumerate(parity_shards):
+        disk_index = idx + 4
 
-    print(f"Stored parity shard {idx} -> {path}")
+        path = write_shard("Sample.pdf", disk_index, parity)
+
+        print(f"Stored parity shard {idx} -> {path}")
+
+
+if __name__ == "__main__":
+    main()
 
 
 
