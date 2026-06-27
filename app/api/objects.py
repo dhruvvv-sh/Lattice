@@ -1,10 +1,13 @@
-from fastapi import APIRouter, UploadFile, File, HTTPException
+import os
+from pathlib import Path
+
+from fastapi import APIRouter, UploadFile, File, HTTPException, Response
+
 from app.database import SessionLocal
 from app.models import Object, Bucket
-from app.storage_engine.writer import save_file
-from app.storage_engine.checksum import calculate_checksum
+from app.storage_engine.checksum import calculate_checksum_bytes
 from app.storage_engine.reader import read_file
-import os
+from app.storage_engine.sharded import cleanup_paths, load_object_bytes, save_object_shards
 
 router = APIRouter(
     prefix="/objects",
@@ -27,7 +30,7 @@ def upload(
 ):
 
     db = SessionLocal()
-    path = None
+    written_paths = []
 
     try:
         bucket = db.query(Bucket).filter(
@@ -40,38 +43,45 @@ def upload(
                 detail="Bucket not found"
             )
 
-        # save_file now returns both path and disk
-        path, disk = save_file(bucket_id, file)
-
-        checksum = calculate_checksum(path)
-        size = os.path.getsize(path)
+        data = file.file.read()
+        filename = Path(file.filename).name
+        checksum = calculate_checksum_bytes(data)
 
         obj = Object(
             bucket_id=bucket_id,
-            object_name=file.filename,
-            file_path=path,
-            disk_name=disk,      # <-- present for the disk selection function 
+            object_name=filename,
+            file_path=f"sharded://bucket_{bucket_id}/{filename}",
+            disk_name="erasure-4+2",
             checksum=checksum,
-            size=size
+            size=len(data),
+            content_type=file.content_type
         )
 
         db.add(obj)
+        db.flush()
+
+        written_paths = save_object_shards(db, obj, data)
+
         db.commit()
         db.refresh(obj)
 
         return {
             "object_id": obj.id,
             "filename": obj.object_name,
-            "disk": obj.disk_name,
+            "storage": obj.disk_name,
+            "shards": len(obj.shards),
             "checksum": obj.checksum,
             "size": obj.size
         }
 
+    except HTTPException:
+        db.rollback()
+        cleanup_paths(written_paths)
+        raise
+
     except Exception as e:
         db.rollback()
-
-        if path and os.path.exists(path):
-            os.remove(path)
+        cleanup_paths(written_paths)
 
         import traceback
         traceback.print_exc()
@@ -101,18 +111,36 @@ def download(object_id: int):
             detail="Object not found"
         )
 
-    if not os.path.exists(obj.file_path):
-        db.close()
+    try:
+        if obj.shards:
+            data = load_object_bytes(obj)
+
+            return Response(
+                content=data,
+                media_type=obj.content_type or "application/octet-stream",
+                headers={
+                    "Content-Disposition": f'attachment; filename="{obj.object_name}"'
+                }
+            )
+
+        if not os.path.exists(obj.file_path):
+            raise HTTPException(
+                status_code=404,
+                detail="Object not found"
+            )
+
+        path = obj.file_path
+
+        return read_file(path)
+
+    except ValueError as exc:
         raise HTTPException(
-            status_code=404,
-            detail="Object not found"
+            status_code=503,
+            detail=str(exc)
         )
 
-    path = obj.file_path
-
-    db.close()
-
-    return read_file(path)
+    finally:
+        db.close()
 
 
 @router.delete("/{object_id}")
@@ -131,7 +159,15 @@ def delete_obj(object_id: int):
                 detail="Object not found"
             )
 
-        if os.path.exists(obj.file_path):
+        filename = obj.object_name
+        shard_paths = [shard.shard_path for shard in obj.shards]
+        cleanup_paths(shard_paths)
+
+        if (
+            obj.file_path
+            and not obj.file_path.startswith("sharded://")
+            and os.path.exists(obj.file_path)
+        ):
             os.remove(obj.file_path)
 
         db.delete(obj)
@@ -140,7 +176,7 @@ def delete_obj(object_id: int):
         return {
             "message": "Object deleted successfully",
             "object_id": object_id,
-            "filename": obj.object_name
+            "filename": filename
         }
 
     except Exception:
