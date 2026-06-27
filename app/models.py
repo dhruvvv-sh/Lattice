@@ -1,15 +1,20 @@
 from sqlalchemy import (
+    Boolean,
     Column,
-    Integer,
-    String,
-    ForeignKey,
     DateTime,
-    Boolean
+    ForeignKey,
+    Integer,
+    JSON,
+    String,
 )
 from sqlalchemy.orm import relationship
-from datetime import datetime
+from datetime import datetime, timezone
 
 from app.database import Base
+
+
+def utc_now():
+    return datetime.now(timezone.utc)
 
 
 class Bucket(Base):
@@ -26,7 +31,7 @@ class Bucket(Base):
 
     created_at = Column(
         DateTime,
-        default=datetime.utcnow
+        default=utc_now
     )
 
 
@@ -74,13 +79,20 @@ class Object(Base):
 
     created_at = Column(
         DateTime,
-        default=datetime.utcnow
+        default=utc_now
     )
 
     shards = relationship(
         "ObjectShard",
         back_populates="object",
         cascade="all, delete-orphan"
+    )
+
+    placement_manifest = relationship(
+        "ObjectPlacementManifest",
+        back_populates="object",
+        cascade="all, delete-orphan",
+        uselist=False
     )
 
 
@@ -108,6 +120,16 @@ class ObjectShard(Base):
         nullable=False
     )
 
+    node_id = Column(
+        String,
+        nullable=True
+    )
+
+    disk_id = Column(
+        String,
+        nullable=True
+    )
+
     shard_path = Column(
         String,
         nullable=False
@@ -123,12 +145,53 @@ class ObjectShard(Base):
         nullable=False
     )
 
+    shard_checksum = Column(
+        String,
+        nullable=True
+    )
+
     created_at = Column(
         DateTime,
-        default=datetime.utcnow
+        default=utc_now
     )
 
     object = relationship(
         "Object",
         back_populates="shards"
+    )
+
+
+class ObjectPlacementManifest(Base):
+    __tablename__ = "object_placement_manifests"
+
+    id = Column(
+        Integer,
+        primary_key=True
+    )
+
+    object_id = Column(
+        Integer,
+        ForeignKey("objects.id"),
+        unique=True,
+        nullable=False
+    )
+
+    strategy = Column(
+        String,
+        nullable=False
+    )
+
+    manifest = Column(
+        JSON,
+        nullable=False
+    )
+
+    created_at = Column(
+        DateTime,
+        default=utc_now
+    )
+
+    object = relationship(
+        "Object",
+        back_populates="placement_manifest"
     )
