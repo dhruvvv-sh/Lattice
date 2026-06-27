@@ -1,20 +1,26 @@
 from pathlib import Path
 
-from shard_manager import split_bytes
-from disk_manager import write_shard
+from app.storage.disk_manager import write_shard
+from app.storage.shard_manager import split_bytes
 
-pdf_path = Path(__file__).parent / "Sample.pdf"
 
-print("Reading:", pdf_path)
+def main():
+    pdf_path = Path(__file__).parent / "Sample.pdf"
 
-with open(pdf_path, "rb") as f:
-    data = f.read()
+    print("Reading:", pdf_path)
 
-shards = split_bytes(data, 4)
+    with open(pdf_path, "rb") as f:
+        data = f.read()
 
-for idx, shard in enumerate(shards):
-    path = write_shard("Sample.pdf", idx, shard)
-    print(f"Stored shard {idx} -> {path}")
+    shards = split_bytes(data, 4)
+
+    for idx, shard in enumerate(shards):
+        path = write_shard("Sample.pdf", idx, shard)
+        print(f"Stored shard {idx} -> {path}")
+
+
+if __name__ == "__main__":
+    main()
 
 
 #success ->
