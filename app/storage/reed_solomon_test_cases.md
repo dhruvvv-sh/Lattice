@@ -1,8 +1,8 @@
 # Reed-Solomon Storage Test Cases
 
 These checks validate the current `4+2` Reed-Solomon erasure coding flow in
-`app/storage/erasure.py`. This storage layer is currently a prototype under
-`app/storage`; it is not yet wired into the FastAPI upload/download path.
+`app/storage/erasure.py`. The same erasure layer is now used by the FastAPI
+upload/download path through `app/storage_engine/sharded.py`.
 
 ## Test Setup
 
@@ -42,6 +42,27 @@ parity_shards 2 [9, 9]
 The Reed-Solomon layer can tolerate up to two missing shards in a six-shard
 stripe. A missing shard may be either a data shard or a parity shard. More than
 two missing shards fails by design for a `4+2` layout.
+
+The API-integrated path now uses this behavior when reading objects. If one or
+two shard files are missing, Lattice reconstructs the original object from the
+remaining shards and returns the original bytes.
+
+## API Integration Coverage
+
+The automated API storage test verifies:
+
+| Check | Expected Result |
+| ---- | --------------- |
+| Upload object | Six shard records are created |
+| Placement manifest | One manifest is persisted for the object |
+| Missing one data shard and one parity shard | Download succeeds |
+| Delete object | Object, shard metadata, manifest, and shard files are cleaned up |
+
+Latest result:
+
+```text
+10 passed
+```
 
 ## Full Output
 
