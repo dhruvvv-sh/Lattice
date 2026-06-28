@@ -2,9 +2,11 @@
 
 from pathlib import Path
 
+from app.storage.cluster_state import DEFAULT_CLUSTER_TOPOLOGY
+
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
-DISKS = [
+LEGACY_DISKS = [
     PROJECT_ROOT / "storage" / "disk1",
     PROJECT_ROOT / "storage" / "disk2",
     PROJECT_ROOT / "storage" / "disk3",
@@ -13,8 +15,14 @@ DISKS = [
     PROJECT_ROOT / "storage" / "disk6",
 ]
 
+DISKS = [
+    disk
+    for disks in DEFAULT_CLUSTER_TOPOLOGY.values()
+    for disk in disks
+]
+
 def write_shard(filename, shard_index, data):
-    disk = DISKS[shard_index]
+    disk = LEGACY_DISKS[shard_index]
 
     shard_path = disk / f"{filename}.part{shard_index}"
 
@@ -28,7 +36,7 @@ def write_shard(filename, shard_index, data):
     return str(shard_path)
 
 def read_shard(filename, shard_index):
-    disk = DISKS[shard_index]
+    disk = LEGACY_DISKS[shard_index]
 
     shard_path = disk / f"{filename}.part{shard_index}"
 
@@ -40,7 +48,7 @@ def shard_exists(filename: str, shard_index: int):
     Check if a shard exists.
     """
 
-    disk = DISKS[shard_index]
+    disk = LEGACY_DISKS[shard_index]
 
     shard_path = Path(disk) / f"{filename}.part{shard_index}"
 
