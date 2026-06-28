@@ -8,6 +8,7 @@ from app.storage.erasure import DATA_SHARDS, PARITY_SHARDS, generate_parity, rec
 from app.storage.shard_manager import reconstruct_bytes, split_bytes
 from app.storage_engine.nodes import (
     StorageNodeRegistry,
+    build_default_local_node_registry,
     build_single_node_registry,
 )
 from app.storage_engine.placement import (
@@ -19,6 +20,14 @@ from app.storage_engine.placement import (
 
 
 TOTAL_SHARDS = DATA_SHARDS + PARITY_SHARDS
+DEFAULT_DISKS = list(DISKS)
+
+
+def _default_registry() -> StorageNodeRegistry:
+    if DISKS != DEFAULT_DISKS:
+        return build_single_node_registry(DISKS)
+
+    return build_default_local_node_registry()
 
 
 def _safe_filename(filename: str) -> str:
@@ -90,7 +99,7 @@ def save_object_shards(
     parity_shards = generate_parity(data_shards)
     all_shards = [*data_shards, *parity_shards]
     strategy = placement_strategy or load_strategy()
-    registry = node_registry or build_single_node_registry(DISKS)
+    registry = node_registry or _default_registry()
     manager = cluster_manager or registry.build_cluster_manager()
     decisions = [
         _normalize_decision(decision)
@@ -100,6 +109,8 @@ def save_object_shards(
                 object_name=obj.object_name,
                 object_size=len(data),
                 total_shards=TOTAL_SHARDS,
+                data_shards=DATA_SHARDS,
+                parity_shards=PARITY_SHARDS,
             ),
             manager.get_storage_targets(),
         )
@@ -187,7 +198,7 @@ def load_object_bytes(
 ):
     data_shards = [None] * DATA_SHARDS
     parity_shards = [None] * PARITY_SHARDS
-    registry = node_registry or build_single_node_registry(DISKS)
+    registry = node_registry or _default_registry()
 
     for shard in obj.shards:
         try:
