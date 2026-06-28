@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Lattice Visualizer</title>
+    <link rel="stylesheet" href="/static/visualizer/styles.css">
+  </head>
+  <body>
+    <main class="shell">
+      <section class="topbar">
+        <div>
+          <h1>Lattice Cluster</h1>
+          <p id="event">ready</p>
+        </div>
+        <form id="upload-form" class="upload">
+          <input id="file-input" name="file" type="file" required>
+          <button type="submit">Upload</button>
+        </form>
+      </section>
+
+      <section class="metrics" aria-label="Cluster metrics">
+        <div>
+          <span>Upload</span>
+          <strong id="upload-ms">-</strong>
+        </div>
+        <div>
+          <span>Download</span>
+          <strong id="download-ms">-</strong>
+        </div>
+        <div>
+          <span>Recovery</span>
+          <strong id="recovery-ms">-</strong>
+        </div>
+      </section>
+
+      <section class="workspace">
+        <div class="nodes" id="nodes"></div>
+        <aside class="objects">
+          <div class="objects-head">
+            <h2>Objects</h2>
+            <button id="reset-nodes" type="button">Reset Nodes</button>
+          </div>
+          <div id="objects"></div>
+        </aside>
+      </section>
+    </main>
+
+    <script src="/static/visualizer/app.js"></script>
+  </body>
+</html>
