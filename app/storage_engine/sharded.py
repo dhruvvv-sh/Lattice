@@ -1,11 +1,15 @@
 import hashlib
 from pathlib import Path
 
-from app.cluster_manager import ClusterManager, build_local_cluster_manager
+from app.cluster_manager import ClusterManager
 from app.models import ObjectPlacementManifest, ObjectShard
 from app.storage.disk_manager import DISKS
 from app.storage.erasure import DATA_SHARDS, PARITY_SHARDS, generate_parity, recover_shards
 from app.storage.shard_manager import reconstruct_bytes, split_bytes
+from app.storage_engine.nodes import (
+    StorageNodeRegistry,
+    build_single_node_registry,
+)
 from app.storage_engine.placement import (
     PlacementDecision,
     PlacementRequest,
@@ -25,21 +29,8 @@ def _shard_base_name(object_id: int, filename: str) -> str:
     return f"object_{object_id}_{_safe_filename(filename)}"
 
 
-def _write_shard_file(
-    object_id: int,
-    filename: str,
-    shard_index: int,
-    disk: Path,
-    data: bytes,
-) -> str:
-    disk.mkdir(parents=True, exist_ok=True)
-
-    shard_path = disk / f"{_shard_base_name(object_id, filename)}.part{shard_index}"
-
-    with open(shard_path, "wb") as shard_file:
-        shard_file.write(data)
-
-    return str(shard_path)
+def _shard_file_name(object_id: int, filename: str, shard_index: int) -> str:
+    return f"{_shard_base_name(object_id, filename)}.part{shard_index}"
 
 
 def _normalize_decision(decision) -> PlacementDecision:
@@ -93,12 +84,14 @@ def save_object_shards(
     data: bytes,
     placement_strategy: PlacementStrategy | None = None,
     cluster_manager: ClusterManager | None = None,
+    node_registry: StorageNodeRegistry | None = None,
 ):
     data_shards = split_bytes(data, DATA_SHARDS)
     parity_shards = generate_parity(data_shards)
     all_shards = [*data_shards, *parity_shards]
     strategy = placement_strategy or load_strategy()
-    manager = cluster_manager or build_local_cluster_manager(DISKS)
+    registry = node_registry or build_single_node_registry(DISKS)
+    manager = cluster_manager or registry.build_cluster_manager()
     decisions = [
         _normalize_decision(decision)
         for decision in strategy.place_object(
@@ -133,14 +126,13 @@ def save_object_shards(
     try:
         for shard_index, shard_data in enumerate(all_shards):
             decision = decisions_by_shard[shard_index]
-            shard_path = _write_shard_file(
-                object_id=obj.id,
-                filename=obj.object_name,
-                shard_index=shard_index,
-                disk=decision.path,
+            node = registry.get(decision.node_id)
+            shard_ref = node.write_shard(
+                disk_id=decision.disk_id,
+                shard_name=_shard_file_name(obj.id, obj.object_name, shard_index),
                 data=shard_data,
             )
-            written_paths.append(shard_path)
+            written_paths.append(shard_ref.path)
             checksum = _shard_checksum(shard_data)
             is_parity = shard_index >= DATA_SHARDS
 
@@ -151,7 +143,7 @@ def save_object_shards(
                     disk_name=decision.disk_id,
                     node_id=decision.node_id,
                     disk_id=decision.disk_id,
-                    shard_path=shard_path,
+                    shard_path=shard_ref.path,
                     is_parity=is_parity,
                     shard_size=len(shard_data),
                     shard_checksum=checksum,
@@ -160,7 +152,7 @@ def save_object_shards(
             manifest["layout"].append(
                 _manifest_entry(
                     decision=decision,
-                    shard_path=shard_path,
+                    shard_path=shard_ref.path,
                     is_parity=is_parity,
                     shard_size=len(shard_data),
                     shard_checksum=checksum,
@@ -189,16 +181,22 @@ def cleanup_paths(paths):
             pass
 
 
-def load_object_bytes(obj):
+def load_object_bytes(
+    obj,
+    node_registry: StorageNodeRegistry | None = None,
+):
     data_shards = [None] * DATA_SHARDS
     parity_shards = [None] * PARITY_SHARDS
+    registry = node_registry or build_single_node_registry(DISKS)
 
     for shard in obj.shards:
-        shard_path = Path(shard.shard_path)
-        if not shard_path.exists():
+        try:
+            shard_data = registry.get(shard.node_id).read_shard(
+                disk_id=shard.disk_id or shard.disk_name,
+                path=shard.shard_path,
+            )
+        except FileNotFoundError:
             continue
-
-        shard_data = shard_path.read_bytes()
 
         if shard.is_parity:
             parity_index = shard.shard_index - DATA_SHARDS
