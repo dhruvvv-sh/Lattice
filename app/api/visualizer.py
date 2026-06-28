@@ -7,6 +7,7 @@ from fastapi.responses import FileResponse
 
 from app.database import SessionLocal
 from app.models import Bucket, Object, ObjectShard
+from app.storage.cluster_state import DEFAULT_CLUSTER_TOPOLOGY
 from app.storage.disk_manager import PROJECT_ROOT
 from app.storage_engine.checksum import calculate_checksum_bytes
 from app.storage_engine.nodes import build_local_node_registry
@@ -21,20 +22,7 @@ router = APIRouter(tags=["Visualizer"])
 
 VISUALIZER_DIR = PROJECT_ROOT / "app" / "static" / "visualizer"
 DEMO_BUCKET_NAME = "visualizer-demo"
-DEMO_NODE_DISKS = {
-    "node-a": [
-        PROJECT_ROOT / "storage" / "node-a" / "disk1",
-        PROJECT_ROOT / "storage" / "node-a" / "disk2",
-    ],
-    "node-b": [
-        PROJECT_ROOT / "storage" / "node-b" / "disk3",
-        PROJECT_ROOT / "storage" / "node-b" / "disk4",
-    ],
-    "node-c": [
-        PROJECT_ROOT / "storage" / "node-c" / "disk5",
-        PROJECT_ROOT / "storage" / "node-c" / "disk6",
-    ],
-}
+DEMO_NODE_DISKS = DEFAULT_CLUSTER_TOPOLOGY
 
 node_status = {
     node_id: {
