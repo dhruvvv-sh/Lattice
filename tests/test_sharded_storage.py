@@ -5,7 +5,7 @@ import pytest
 from app.models import ObjectPlacementManifest, ObjectShard
 from app.storage_engine import sharded
 from app.storage_engine.nodes import build_local_node_registry
-from app.storage_engine.placement import ShardPlacement
+from app.storage_engine.placement import BalancedPlacement, ShardPlacement
 
 
 class FakeDb:
@@ -20,8 +20,15 @@ class FakeDb:
 
 
 def test_sharded_storage_round_trip_and_two_shard_recovery(tmp_path, monkeypatch):
-    disks = [tmp_path / f"disk{i}" for i in range(1, 7)]
-    monkeypatch.setattr(sharded, "DISKS", disks)
+    registry = build_local_node_registry(
+        {
+            "node-a": [tmp_path / "node-a" / "disk1", tmp_path / "node-a" / "disk2"],
+            "node-b": [tmp_path / "node-b" / "disk3", tmp_path / "node-b" / "disk4"],
+            "node-c": [tmp_path / "node-c" / "disk5", tmp_path / "node-c" / "disk6"],
+            "node-d": [tmp_path / "node-d" / "disk7", tmp_path / "node-d" / "disk8"],
+            "node-e": [tmp_path / "node-e" / "disk9", tmp_path / "node-e" / "disk10"],
+        }
+    )
 
     data = b"Lattice sharded upload test data" * 257
     obj = SimpleNamespace(
@@ -32,24 +39,42 @@ def test_sharded_storage_round_trip_and_two_shard_recovery(tmp_path, monkeypatch
         placement_manifest=None,
     )
 
-    paths = sharded.save_object_shards(FakeDb(obj), obj, data)
+    paths = sharded.save_object_shards(FakeDb(obj), obj, data, node_registry=registry)
+    parity_nodes = {
+        shard.node_id
+        for shard in obj.shards
+        if shard.is_parity
+    }
 
     assert len(paths) == sharded.TOTAL_SHARDS
     assert len(obj.shards) == sharded.TOTAL_SHARDS
-    assert obj.placement_manifest.manifest["strategy"] == "BalancedPlacement"
+    assert obj.placement_manifest.manifest["strategy"] == "PlacementScheduler"
     assert len(obj.placement_manifest.manifest["layout"]) == sharded.TOTAL_SHARDS
-    assert all(path.exists() for path in disks)
-    assert sharded.load_object_bytes(obj) == data
+    assert len(parity_nodes) == 2
+    assert sharded.load_object_bytes(obj, node_registry=registry) == data
 
-    (tmp_path / "disk2" / "object_101_sample.bin.part1").unlink()
-    (tmp_path / "disk5" / "object_101_sample.bin.part4").unlink()
+    registry.get(obj.shards[1].node_id).delete_shard(
+        obj.shards[1].disk_id,
+        obj.shards[1].shard_path,
+    )
+    registry.get(obj.shards[4].node_id).delete_shard(
+        obj.shards[4].disk_id,
+        obj.shards[4].shard_path,
+    )
 
-    assert sharded.load_object_bytes(obj) == data
+    assert sharded.load_object_bytes(obj, node_registry=registry) == data
 
 
-def test_sharded_storage_fails_when_more_than_two_shards_are_missing(tmp_path, monkeypatch):
-    disks = [tmp_path / f"disk{i}" for i in range(1, 7)]
-    monkeypatch.setattr(sharded, "DISKS", disks)
+def test_sharded_storage_fails_when_more_than_two_shards_are_missing(tmp_path):
+    registry = build_local_node_registry(
+        {
+            "node-a": [tmp_path / "node-a" / "disk1", tmp_path / "node-a" / "disk2"],
+            "node-b": [tmp_path / "node-b" / "disk3", tmp_path / "node-b" / "disk4"],
+            "node-c": [tmp_path / "node-c" / "disk5", tmp_path / "node-c" / "disk6"],
+            "node-d": [tmp_path / "node-d" / "disk7", tmp_path / "node-d" / "disk8"],
+            "node-e": [tmp_path / "node-e" / "disk9", tmp_path / "node-e" / "disk10"],
+        }
+    )
 
     data = b"cannot recover this when three shards are gone" * 129
     obj = SimpleNamespace(
@@ -60,14 +85,13 @@ def test_sharded_storage_fails_when_more_than_two_shards_are_missing(tmp_path, m
         placement_manifest=None,
     )
 
-    sharded.save_object_shards(FakeDb(obj), obj, data)
+    sharded.save_object_shards(FakeDb(obj), obj, data, node_registry=registry)
 
-    (tmp_path / "disk1" / "object_102_sample.bin.part0").unlink()
-    (tmp_path / "disk2" / "object_102_sample.bin.part1").unlink()
-    (tmp_path / "disk5" / "object_102_sample.bin.part4").unlink()
+    for shard in obj.shards[:3]:
+        registry.get(shard.node_id).delete_shard(shard.disk_id, shard.shard_path)
 
     with pytest.raises(ValueError, match="Too many missing shards"):
-        sharded.load_object_bytes(obj)
+        sharded.load_object_bytes(obj, node_registry=registry)
 
 
 class ReversePlacement:
@@ -138,6 +162,7 @@ def test_sharded_storage_can_place_shards_across_three_local_nodes(tmp_path):
         obj,
         data,
         node_registry=registry,
+        placement_strategy=BalancedPlacement(),
     )
 
     assert [(shard.node_id, shard.disk_id) for shard in obj.shards] == [
