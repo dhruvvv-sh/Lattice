@@ -3,6 +3,7 @@ from pathlib import Path
 from typing import Protocol
 
 from app.cluster_manager import ClusterManager
+from app.storage.cluster_state import DEFAULT_CLUSTER_TOPOLOGY
 
 
 @dataclass(frozen=True)
@@ -136,3 +137,7 @@ def build_local_node_registry(node_disks: dict[str, list[Path]]):
         )
 
     return registry
+
+
+def build_default_local_node_registry():
+    return build_local_node_registry(DEFAULT_CLUSTER_TOPOLOGY)
