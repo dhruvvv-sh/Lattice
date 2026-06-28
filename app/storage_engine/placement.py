@@ -31,6 +31,15 @@ class PlacementRequest:
     object_name: str
     object_size: int
     total_shards: int
+    data_shards: int | None = None
+    parity_shards: int = 0
+
+    @property
+    def parity_shard_ids(self) -> set[int]:
+        if self.data_shards is None or self.parity_shards <= 0:
+            return set()
+
+        return set(range(self.data_shards, self.data_shards + self.parity_shards))
 
 
 class PlacementStrategy(ABC):
@@ -110,7 +119,7 @@ class CapacityAwarePlacement(PlacementStrategy):
         ]
 
 
-class RandomPlacement(PlacementStrategy):
+class PlacementScheduler(PlacementStrategy):
     def place_object(
         self,
         request: PlacementRequest,
@@ -121,29 +130,94 @@ class RandomPlacement(PlacementStrategy):
         if len(healthy_targets) < request.total_shards:
             raise ValueError("Not enough healthy storage targets for shard placement")
 
-        selected = random.sample(healthy_targets, request.total_shards)
+        parity_ids = sorted(request.parity_shard_ids)
+
+        if request.parity_shards and len(parity_ids) != request.parity_shards:
+            raise ValueError("Placement request has invalid parity shard metadata")
+
+        decisions_by_shard = {}
+        selected_keys = set()
+
+        if parity_ids:
+            targets_by_node = {}
+
+            for target in healthy_targets:
+                targets_by_node.setdefault(target.node_id, []).append(target)
+
+            if len(targets_by_node) < len(parity_ids):
+                raise ValueError("Not enough healthy nodes to place parity shards separately")
+
+            parity_nodes = random.sample(list(targets_by_node), len(parity_ids))
+
+            for shard_id, node_id in zip(parity_ids, parity_nodes):
+                candidates = [
+                    target
+                    for target in targets_by_node[node_id]
+                    if (target.node_id, target.disk_id) not in selected_keys
+                ]
+
+                if not candidates:
+                    raise ValueError(f"No available disk on {node_id} for parity shard")
+
+                target = random.choice(candidates)
+                selected_keys.add((target.node_id, target.disk_id))
+                decisions_by_shard[shard_id] = self._decision(shard_id, target)
+
+        remaining_shard_ids = [
+            shard_id
+            for shard_id in range(request.total_shards)
+            if shard_id not in decisions_by_shard
+        ]
+        remaining_targets = [
+            target
+            for target in healthy_targets
+            if (target.node_id, target.disk_id) not in selected_keys
+        ]
+
+        if len(remaining_targets) < len(remaining_shard_ids):
+            raise ValueError("Not enough healthy storage targets for shard placement")
+
+        for shard_id, target in zip(
+            remaining_shard_ids,
+            random.sample(remaining_targets, len(remaining_shard_ids)),
+        ):
+            decisions_by_shard[shard_id] = self._decision(shard_id, target)
 
         return [
-            PlacementDecision(
-                shard_id=shard_id,
-                node_id=target.node_id,
-                disk_id=target.disk_id,
-                path=target.path,
-            )
-            for shard_id, target in enumerate(selected)
+            decisions_by_shard[shard_id]
+            for shard_id in range(request.total_shards)
         ]
+
+    @staticmethod
+    def _decision(shard_id: int, target: StorageTarget) -> PlacementDecision:
+        return PlacementDecision(
+            shard_id=shard_id,
+            node_id=target.node_id,
+            disk_id=target.disk_id,
+            path=target.path,
+            metadata={
+                "placement": "random-spread",
+            },
+        )
+
+
+class RandomPlacement(PlacementScheduler):
+    pass
 
 
 BUILT_IN_STRATEGIES = {
     "balanced": BalancedPlacement,
     "capacity": CapacityAwarePlacement,
     "capacity_aware": CapacityAwarePlacement,
+    "placement_scheduler": PlacementScheduler,
     "random": RandomPlacement,
+    "random_spread": PlacementScheduler,
+    "scheduler": PlacementScheduler,
 }
 
 
 def load_strategy(strategy_name: str | None = None) -> PlacementStrategy:
-    name = strategy_name or os.getenv("LATTICE_PLACEMENT_STRATEGY", "balanced")
+    name = strategy_name or os.getenv("LATTICE_PLACEMENT_STRATEGY", "random_spread")
 
     if name in BUILT_IN_STRATEGIES:
         return BUILT_IN_STRATEGIES[name]()
