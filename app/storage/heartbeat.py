@@ -1,14 +1,3 @@
-# app/storage_engine/disk_selector.py
-
-DISKS = [
-    "storage/disk1",
-    "storage/disk2",
-    "storage/disk3",
-    "storage/disk4",
-    "storage/disk5",
-    "storage/disk6",
-]
-
 from datetime import datetime
 
 from app.storage.disk_manager import DISKS
