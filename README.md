@@ -395,13 +395,10 @@ Performance benchmark results are available in the `benchmark/` directory.
 
 ---
 
-# Motivation
+# FOR THE VISUAL LEARNERS ;)
+<img width="1378" height="478" alt="Screenshot 2026-07-02 at 10 12 11 PM" src="https://github.com/user-attachments/assets/4daefad1-8e2d-4a29-a445-46bdea1abd4d" />
 
-Lattice was created as a systems engineering project to understand how modern object storage platforms separate metadata management from physical storage while maintaining durability, scalability, and fault tolerance.
 
-Instead of relying on existing storage frameworks for the whole system, Lattice implements the core object-storage concepts directly: bucket/object APIs, metadata persistence, sharded placement, Reed-Solomon parity, disk health checks, placement manifests, and recovery simulations.
-
-The long-term vision is to evolve Lattice into a distributed object storage engine capable of fault-tolerant storage, S3 compatibility, automatic healing, and intelligent semantic retrieval.
 
 ---
 
