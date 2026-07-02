@@ -28,6 +28,7 @@ def build_test_session(tmp_path, monkeypatch):
 
     disks = [tmp_path / f"disk{i}" for i in range(1, 7)]
     monkeypatch.setattr(sharded, "DISKS", disks)
+    monkeypatch.setenv("LATTICE_PLACEMENT_STRATEGY", "balanced")
     monkeypatch.setattr(objects, "SessionLocal", testing_session)
 
     return testing_session
