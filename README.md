@@ -52,6 +52,8 @@ The long-term goal is to evolve Lattice into a distributed, fault-tolerant objec
 
 Lattice currently runs as a single API process with local storage targets. The architecture now has the right seams for multi-node storage, but actual node-to-node transfer, replication, background repair, and rebalancing are still planned work.
 
+For a practical map of where each layer lives and where to add future features, see `docs/project-organization.md`.
+
 ---
 
 # Architecture
@@ -96,12 +98,12 @@ The storage prototype now uses Reed-Solomon erasure coding:
 Example logical placement:
 
 ```text
-node-1/disk1 -> data0
-node-1/disk2 -> data1
-node-1/disk3 -> data2
-node-1/disk4 -> data3
-node-1/disk5 -> parity0
-node-1/disk6 -> parity1
+storage/cluster/node-a/disk1 -> data0
+storage/cluster/node-a/disk2 -> data1
+storage/cluster/node-b/disk3 -> data2
+storage/cluster/node-b/disk4 -> data3
+storage/cluster/node-c/disk5 -> parity0
+storage/cluster/node-c/disk6 -> parity1
 ```
 
 Supported recovery cases:
@@ -211,7 +213,7 @@ PostgreSQL runs inside Docker with this connection string:
 postgresql://postgres:postgres@localhost:5432/lattice
 ```
 
-Uploaded objects are stored in the local `storage/` directory through a bind mount, and database files are stored in the Docker volume `postgres_data`.
+Uploaded object shards are stored under `storage/cluster/` through a bind mount, and database files are stored in the Docker volume `postgres_data`.
 
 To stop the containers:
 
@@ -261,18 +263,20 @@ lattice/
 |-- benchmark/
 |   |-- benchmarks_locust_v1.md
 |   `-- benchmarks_locust_v2.md
+|-- docs/
+|   `-- project-organization.md
 |-- tests/
 |   |-- test_cluster_manager.py
 |   |-- test_objects_api.py
 |   |-- test_placement.py
 |   `-- test_sharded_storage.py
 |-- storage/
-|   |-- disk1/
-|   |-- disk2/
-|   |-- disk3/
-|   |-- disk4/
-|   |-- disk5/
-|   `-- disk6/
+|   |-- cluster/
+|   |   |-- node-a/
+|   |   |-- node-b/
+|   |   `-- ...
+|   |-- legacy/
+|   `-- samples/
 |-- Dockerfile
 |-- docker-compose.yml
 |-- simulationoutputs.md
