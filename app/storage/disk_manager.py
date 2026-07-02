@@ -2,17 +2,17 @@
 
 from pathlib import Path
 
-from app.storage.cluster_state import DEFAULT_CLUSTER_TOPOLOGY
+from app.storage.cluster_state import DEFAULT_CLUSTER_TOPOLOGY, LEGACY_STORAGE_ROOT
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 LEGACY_DISKS = [
-    PROJECT_ROOT / "storage" / "disk1",
-    PROJECT_ROOT / "storage" / "disk2",
-    PROJECT_ROOT / "storage" / "disk3",
-    PROJECT_ROOT / "storage" / "disk4",
-    PROJECT_ROOT / "storage" / "disk5",
-    PROJECT_ROOT / "storage" / "disk6",
+    LEGACY_STORAGE_ROOT / "disk1",
+    LEGACY_STORAGE_ROOT / "disk2",
+    LEGACY_STORAGE_ROOT / "disk3",
+    LEGACY_STORAGE_ROOT / "disk4",
+    LEGACY_STORAGE_ROOT / "disk5",
+    LEGACY_STORAGE_ROOT / "disk6",
 ]
 
 DISKS = [
