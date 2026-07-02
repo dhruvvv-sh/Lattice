@@ -100,12 +100,12 @@ Lattice currently uses a `4+2` Reed-Solomon layout:
 Example logical placement:
 
 ```text
-node-1/disk1 -> data0
-node-1/disk2 -> data1
-node-1/disk3 -> data2
-node-1/disk4 -> data3
-node-1/disk5 -> parity0
-node-1/disk6 -> parity1
+storage/cluster/node-a/disk1 -> data0
+storage/cluster/node-a/disk2 -> data1
+storage/cluster/node-b/disk3 -> data2
+storage/cluster/node-b/disk4 -> data3
+storage/cluster/node-c/disk5 -> parity0
+storage/cluster/node-c/disk6 -> parity1
 ```
 
 Recovery support:
@@ -218,7 +218,7 @@ Example shape:
       "type": "data",
       "node": "node-1",
       "disk": "disk1",
-      "path": "storage/disk1/object_1_file.bin.part0",
+      "path": "storage/cluster/node-a/disk1/object_1_file.bin.part0",
       "replica": false,
       "size": 1024,
       "checksum": "...",
