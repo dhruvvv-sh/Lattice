@@ -4,9 +4,9 @@ import random
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
-
 from app.cluster_manager import StorageTarget
-
+import hashlib
+from collections import defaultdict
 
 @dataclass(frozen=True)
 class PlacementDecision:
@@ -204,6 +204,69 @@ class PlacementScheduler(PlacementStrategy):
 class RandomPlacement(PlacementScheduler):
     pass
 
+class NodeHashPlacement(PlacementStrategy):
+    """
+    Deterministically places each shard on a storage node by hashing
+    (object_id, shard_index). The selected node then stores the shard
+    on one of its local disks.
+    """
+
+    def place_object(
+        self,
+        request: PlacementRequest,
+        targets: list[StorageTarget],
+    ) -> list[PlacementDecision]:
+        healthy_targets = [
+            target
+            for target in targets
+            if target.healthy and target.online
+        ]
+
+        if not healthy_targets:
+            raise ValueError("No healthy storage targets available for placement")
+
+        targets_by_node: dict[str, list[StorageTarget]] = {}
+        for target in healthy_targets:
+            targets_by_node.setdefault(target.node_id, []).append(target)
+
+        node_ids = sorted(targets_by_node)
+        if not node_ids:
+            raise ValueError("No healthy storage targets available for placement")
+
+        decisions: list[PlacementDecision] = []
+
+        for shard_id in range(request.total_shards):
+            digest = hashlib.sha256(
+                f"{request.object_id}:{shard_id}".encode("utf-8")
+            ).hexdigest()
+            node_index = int(digest, 16) % len(node_ids)
+            node_id = node_ids[node_index]
+
+            node_targets = sorted(
+                targets_by_node[node_id],
+                key=lambda target: (target.disk_id, target.path.as_posix()),
+            )
+            disk_digest = hashlib.sha256(
+                f"{request.object_id}:{shard_id}:{node_id}".encode("utf-8")
+            ).hexdigest()
+            disk_index = int(disk_digest, 16) % len(node_targets)
+            target = node_targets[disk_index]
+
+            decisions.append(
+                PlacementDecision(
+                    shard_id=shard_id,
+                    node_id=target.node_id,
+                    disk_id=target.disk_id,
+                    path=target.path,
+                    metadata={
+                        "placement": "node_hash",
+                        "node_hash": digest,
+                    },
+                )
+            )
+
+        return decisions
+
 
 BUILT_IN_STRATEGIES = {
     "balanced": BalancedPlacement,
@@ -213,11 +276,16 @@ BUILT_IN_STRATEGIES = {
     "random": RandomPlacement,
     "random_spread": PlacementScheduler,
     "scheduler": PlacementScheduler,
+
+    "node_hash": NodeHashPlacement,
 }
 
 
 def load_strategy(strategy_name: str | None = None) -> PlacementStrategy:
-    name = strategy_name or os.getenv("LATTICE_PLACEMENT_STRATEGY", "random_spread")
+    name = strategy_name or os.getenv(
+    "LATTICE_PLACEMENT_STRATEGY",
+    "node_hash",
+    )
 
     if name in BUILT_IN_STRATEGIES:
         return BUILT_IN_STRATEGIES[name]()
