@@ -1,5 +1,6 @@
 # app/storage/disk_manager.py
 
+import os
 from pathlib import Path
 
 from app.storage.cluster_state import DEFAULT_CLUSTER_TOPOLOGY, LEGACY_STORAGE_ROOT
@@ -13,6 +14,16 @@ LEGACY_DISKS = [
     LEGACY_STORAGE_ROOT / "disk4",
     LEGACY_STORAGE_ROOT / "disk5",
     LEGACY_STORAGE_ROOT / "disk6",
+    LEGACY_STORAGE_ROOT / "disk7",
+    LEGACY_STORAGE_ROOT / "disk8",
+    LEGACY_STORAGE_ROOT / "disk9",
+    LEGACY_STORAGE_ROOT / "disk10",
+    LEGACY_STORAGE_ROOT / "disk11",
+    LEGACY_STORAGE_ROOT / "disk12",
+    LEGACY_STORAGE_ROOT / "disk13",
+    LEGACY_STORAGE_ROOT / "disk14",
+    LEGACY_STORAGE_ROOT / "disk15",
+    LEGACY_STORAGE_ROOT / "disk16",
 ]
 
 DISKS = [
