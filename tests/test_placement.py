@@ -6,6 +6,7 @@ from app.storage_engine.placement import (
     PlacementDecision,
     PlacementRequest,
     RandomPlacement,
+    NodeHashPlacement,
     load_strategy,
 )
 
@@ -60,7 +61,35 @@ def test_load_strategy_returns_builtin_strategy():
     assert isinstance(load_strategy("capacity_aware"), CapacityAwarePlacement)
     assert isinstance(load_strategy("random"), RandomPlacement)
     assert isinstance(load_strategy("scheduler"), PlacementScheduler)
-    assert isinstance(load_strategy(), PlacementScheduler)
+    assert isinstance(load_strategy("node_hash"), NodeHashPlacement)
+    assert isinstance(load_strategy(), NodeHashPlacement)
+
+
+def test_node_hash_placement_is_deterministic_and_ignores_unhealthy_targets(tmp_path):
+    targets = [
+        StorageTarget("node-a", "disk1", tmp_path / "node-a" / "disk1"),
+        StorageTarget("node-a", "disk2", tmp_path / "node-a" / "disk2"),
+        StorageTarget("node-b", "disk3", tmp_path / "node-b" / "disk3"),
+        StorageTarget("node-c", "disk4", tmp_path / "node-c" / "disk4", healthy=False),
+    ]
+
+    request = PlacementRequest(
+        object_id=11,
+        object_name="object.bin",
+        object_size=1024,
+        total_shards=4,
+        data_shards=2,
+        parity_shards=2,
+    )
+
+    decisions_a = NodeHashPlacement().place_object(request, targets)
+    decisions_b = NodeHashPlacement().place_object(request, targets)
+
+    assert [decision.shard_id for decision in decisions_a] == [0, 1, 2, 3]
+    assert [(decision.node_id, decision.disk_id) for decision in decisions_a] == [
+        (decision.node_id, decision.disk_id) for decision in decisions_b
+    ]
+    assert all(decision.node_id != "node-c" for decision in decisions_a)
 
 
 def test_placement_scheduler_keeps_parity_on_different_nodes(tmp_path):
