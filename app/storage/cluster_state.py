@@ -28,6 +28,18 @@ DEFAULT_CLUSTER_TOPOLOGY = {
         RUNTIME_STORAGE_ROOT / "node-e" / "disk9",
         RUNTIME_STORAGE_ROOT / "node-e" / "disk10",
     ],
+    "node-f": [
+        RUNTIME_STORAGE_ROOT / "node-f" / "disk11",
+        RUNTIME_STORAGE_ROOT / "node-f" / "disk12",
+    ],
+    "node-g": [
+        RUNTIME_STORAGE_ROOT / "node-g" / "disk13",
+        RUNTIME_STORAGE_ROOT / "node-g" / "disk14",
+    ],
+    "node-h": [
+        RUNTIME_STORAGE_ROOT / "node-h" / "disk15",
+        RUNTIME_STORAGE_ROOT / "node-h" / "disk16",
+    ],
 }
 
 disk_status = {}
