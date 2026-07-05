@@ -1,4 +1,3 @@
-import os
 from pathlib import Path
 
 from fastapi import APIRouter, UploadFile, File, HTTPException, Response
@@ -6,8 +5,11 @@ from fastapi import APIRouter, UploadFile, File, HTTPException, Response
 from app.database import SessionLocal
 from app.models import Object, Bucket
 from app.storage_engine.checksum import calculate_checksum_bytes
-from app.storage_engine.reader import read_file
-from app.storage_engine.sharded import cleanup_paths, load_object_bytes, save_object_shards
+from app.storage_engine.sharded import (
+    cleanup_paths,
+    load_object_bytes,
+    save_object_shards,
+)
 
 router = APIRouter(
     prefix="/objects",
@@ -18,9 +20,10 @@ router = APIRouter(
 @router.get("/")
 def list_objects():
     db = SessionLocal()
-    objects = db.query(Object).all()
-    db.close()
-    return objects
+    try:
+        return db.query(Object).all()
+    finally:
+        db.close()
 
 
 @router.post("/upload/{bucket_id}")
@@ -28,7 +31,6 @@ def upload(
     bucket_id: int,
     file: UploadFile = File(...)
 ):
-
     db = SessionLocal()
     written_paths = []
 
@@ -54,7 +56,7 @@ def upload(
             disk_name="erasure-4+2",
             checksum=checksum,
             size=len(data),
-            content_type=file.content_type
+            content_type=file.content_type,
         )
 
         db.add(obj)
@@ -71,7 +73,7 @@ def upload(
             "storage": obj.disk_name,
             "shards": len(obj.shards),
             "checksum": obj.checksum,
-            "size": obj.size
+            "size": obj.size,
         }
 
     except HTTPException:
@@ -97,46 +99,39 @@ def upload(
 
 @router.get("/{object_id}")
 def download(object_id: int):
-
     db = SessionLocal()
 
-    obj = db.query(Object).filter(
-        Object.id == object_id
-    ).first()
-
-    if obj is None:
-        db.close()
-        raise HTTPException(
-            status_code=404,
-            detail="Object not found"
-        )
-
     try:
-        if obj.shards:
-            data = load_object_bytes(obj)
+        obj = db.query(Object).filter(
+            Object.id == object_id
+        ).first()
 
-            return Response(
-                content=data,
-                media_type=obj.content_type or "application/octet-stream",
-                headers={
-                    "Content-Disposition": f'attachment; filename="{obj.object_name}"'
-                }
-            )
-
-        if not os.path.exists(obj.file_path):
+        if obj is None:
             raise HTTPException(
                 status_code=404,
                 detail="Object not found"
             )
 
-        path = obj.file_path
+        if not obj.shards:
+            raise HTTPException(
+                status_code=500,
+                detail="Object has no shard metadata."
+            )
 
-        return read_file(path)
+        data = load_object_bytes(obj)
+
+        return Response(
+            content=data,
+            media_type=obj.content_type or "application/octet-stream",
+            headers={
+                "Content-Disposition": f'attachment; filename="{obj.object_name}"'
+            },
+        )
 
     except ValueError as exc:
         raise HTTPException(
             status_code=503,
-            detail=str(exc)
+            detail=str(exc),
         )
 
     finally:
@@ -145,7 +140,6 @@ def download(object_id: int):
 
 @router.delete("/{object_id}")
 def delete_obj(object_id: int):
-
     db = SessionLocal()
 
     try:
@@ -161,14 +155,8 @@ def delete_obj(object_id: int):
 
         filename = obj.object_name
         shard_paths = [shard.shard_path for shard in obj.shards]
-        cleanup_paths(shard_paths)
 
-        if (
-            obj.file_path
-            and not obj.file_path.startswith("sharded://")
-            and os.path.exists(obj.file_path)
-        ):
-            os.remove(obj.file_path)
+        cleanup_paths(shard_paths)
 
         db.delete(obj)
         db.commit()
@@ -176,7 +164,7 @@ def delete_obj(object_id: int):
         return {
             "message": "Object deleted successfully",
             "object_id": object_id,
-            "filename": filename
+            "filename": filename,
         }
 
     except Exception:
