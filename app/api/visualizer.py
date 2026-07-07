@@ -16,8 +16,6 @@ from app.storage_engine.sharded import (
     load_object_bytes,
     save_object_shards,
 )
-
-
 router = APIRouter(tags=["Visualizer"])
 
 VISUALIZER_DIR = PROJECT_ROOT / "app" / "static" / "visualizer"
