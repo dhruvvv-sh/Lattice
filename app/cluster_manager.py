@@ -1,3 +1,4 @@
+#responsible for keeping track of the storage infrastructure
 import shutil
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -5,7 +6,7 @@ from pathlib import Path
 
 
 @dataclass
-class StorageNode:
+class StorageNode:  #stores info about the machines / VM
     node_id: str
     host: str | None = None
     port: int | None = None
@@ -17,7 +18,7 @@ class StorageNode:
 
 
 @dataclass
-class StorageTarget:
+class StorageTarget: #stores info about the disks on the VM's 
     node_id: str
     disk_id: str
     path: Path
