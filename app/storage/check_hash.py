@@ -4,7 +4,7 @@ import hashlib
 
 
 def sha(path):
-    with open(path, "rb") as f:
+    with open(path, "rb") as f:  #reading binary file - ensures that the file is closed as soon as we reach EOF 
         return hashlib.sha256(f.read()).hexdigest()
 
 

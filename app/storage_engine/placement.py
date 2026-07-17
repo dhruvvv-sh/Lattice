@@ -6,7 +6,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from app.cluster_manager import StorageTarget
 import hashlib
-from collections import defaultdict
 
 @dataclass(frozen=True)
 class PlacementDecision:

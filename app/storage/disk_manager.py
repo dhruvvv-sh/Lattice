@@ -1,5 +1,11 @@
 # app/storage/disk_manager.py
+"""
+this file remains for:
 
+old tests
+migration
+compatibility
+"""
 import os
 from pathlib import Path
 
