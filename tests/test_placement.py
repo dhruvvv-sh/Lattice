@@ -7,6 +7,7 @@ from app.storage_engine.placement import (
     PlacementRequest,
     RandomPlacement,
     NodeHashPlacement,
+    ReplicationAwarePlacement,
     load_strategy,
 )
 
@@ -62,6 +63,7 @@ def test_load_strategy_returns_builtin_strategy():
     assert isinstance(load_strategy("random"), RandomPlacement)
     assert isinstance(load_strategy("scheduler"), PlacementScheduler)
     assert isinstance(load_strategy("node_hash"), NodeHashPlacement)
+    assert isinstance(load_strategy("replication_aware"), ReplicationAwarePlacement)
     assert isinstance(load_strategy(), NodeHashPlacement)
 
 
@@ -123,3 +125,61 @@ def test_placement_scheduler_keeps_parity_on_different_nodes(tmp_path):
     assert len(decisions) == 6
     assert len({(decision.node_id, decision.disk_id) for decision in decisions}) == 6
     assert len(parity_nodes) == 2
+
+
+def test_replication_aware_placement_creates_primary_and_replica_per_shard(tmp_path):
+    targets = [
+        StorageTarget("node-a", "disk1", tmp_path / "node-a" / "disk1"),
+        StorageTarget("node-a", "disk2", tmp_path / "node-a" / "disk2"),
+        StorageTarget("node-b", "disk3", tmp_path / "node-b" / "disk3"),
+        StorageTarget("node-b", "disk4", tmp_path / "node-b" / "disk4"),
+        StorageTarget("node-c", "disk5", tmp_path / "node-c" / "disk5"),
+        StorageTarget("node-c", "disk6", tmp_path / "node-c" / "disk6"),
+    ]
+    request = PlacementRequest(
+        object_id=42,
+        object_name="object.bin",
+        object_size=2048,
+        total_shards=4,
+        data_shards=2,
+        parity_shards=2,
+    )
+
+    decisions = ReplicationAwarePlacement().place_object(request, targets)
+
+    assert len(decisions) == request.total_shards * 2
+
+    for shard_id in range(request.total_shards):
+        copies = [
+            decision
+            for decision in decisions
+            if decision.shard_id == shard_id
+        ]
+
+        assert [copy.copy_index for copy in copies] == [0, 1]
+        assert [copy.role for copy in copies] == ["primary", "replica"]
+        assert [copy.replica for copy in copies] == [False, True]
+        assert copies[0].node_id != copies[1].node_id
+        assert copies[0].metadata["replication_factor"] == 2
+
+
+def test_replication_aware_placement_requires_different_healthy_nodes(tmp_path):
+    targets = [
+        StorageTarget("node-a", "disk1", tmp_path / "node-a" / "disk1"),
+        StorageTarget(
+            "node-b",
+            "disk2",
+            tmp_path / "node-b" / "disk2",
+            healthy=False,
+        ),
+    ]
+
+    try:
+        ReplicationAwarePlacement().place_object(
+            placement_request(total_shards=2),
+            targets,
+        )
+    except ValueError as exc:
+        assert "Not enough healthy logical nodes" in str(exc)
+    else:
+        raise AssertionError("expected placement to fail")

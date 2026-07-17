@@ -115,6 +115,18 @@ class ObjectShard(Base):
         nullable=False
     )
 
+    copy_index = Column(
+        Integer,
+        nullable=False,
+        default=0
+    )
+
+    role = Column(
+        String,
+        nullable=False,
+        default="primary"
+    )
+
     disk_name = Column(
         String,
         nullable=False
@@ -147,6 +159,17 @@ class ObjectShard(Base):
 
     shard_checksum = Column(
         String,
+        nullable=True
+    )
+
+    healthy = Column(
+        Boolean,
+        nullable=False,
+        default=True
+    )
+
+    last_verified_at = Column(
+        DateTime,
         nullable=True
     )
 

@@ -38,8 +38,18 @@ def _shard_base_name(object_id: int, filename: str) -> str:
     return f"object_{object_id}_{_safe_filename(filename)}"
 
 
-def _shard_file_name(object_id: int, filename: str, shard_index: int) -> str:
-    return f"{_shard_base_name(object_id, filename)}.part{shard_index}"
+def _shard_file_name(
+    object_id: int,
+    filename: str,
+    shard_index: int,
+    copy_index: int = 0,
+) -> str:
+    base_name = f"{_shard_base_name(object_id, filename)}.part{shard_index}"
+
+    if copy_index == 0:
+        return base_name
+
+    return f"{base_name}.replica{copy_index}"
 
 
 def _normalize_decision(decision) -> PlacementDecision:
@@ -52,6 +62,8 @@ def _normalize_decision(decision) -> PlacementDecision:
             node_id=getattr(decision, "node_id", "node-1"),
             disk_id=decision.disk_name,
             path=decision.disk_path,
+            copy_index=getattr(decision, "copy_index", 0),
+            role=getattr(decision, "role", "primary"),
             replica=getattr(decision, "replica", False),
             metadata=getattr(decision, "metadata", None),
         )
@@ -80,11 +92,41 @@ def _manifest_entry(
         "node": decision.node_id,
         "disk": decision.disk_id,
         "path": shard_path,
+        "copy_index": decision.copy_index,
+        "role": decision.role,
         "replica": decision.replica,
         "size": shard_size,
         "checksum": shard_checksum,
         "metadata": decision.metadata or {},
     }
+
+
+def _decisions_by_shard(
+    decisions: list[PlacementDecision],
+) -> dict[int, list[PlacementDecision]]:
+    grouped: dict[int, list[PlacementDecision]] = {}
+
+    for decision in decisions:
+        grouped.setdefault(decision.shard_id, []).append(decision)
+
+    if set(grouped) != set(range(TOTAL_SHARDS)):
+        raise ValueError("Placement strategy returned invalid shard indexes")
+
+    for shard_id, shard_decisions in grouped.items():
+        copy_indexes = [decision.copy_index for decision in shard_decisions]
+
+        if len(copy_indexes) != len(set(copy_indexes)):
+            raise ValueError(
+                f"Placement strategy returned duplicate copy indexes for shard {shard_id}"
+            )
+        if 0 not in copy_indexes:
+            raise ValueError(
+                f"Placement strategy must return a primary copy for shard {shard_id}"
+            )
+
+        shard_decisions.sort(key=lambda decision: decision.copy_index)
+
+    return grouped
 
 
 def save_object_shards(
@@ -116,19 +158,11 @@ def save_object_shards(
         )
     ]
 
-    if len(decisions) != TOTAL_SHARDS:
-        raise ValueError("Placement strategy must return one placement per shard")
-
-    decisions_by_shard = {
-        decision.shard_id: decision
-        for decision in decisions
-    }
-
-    if set(decisions_by_shard) != set(range(TOTAL_SHARDS)):
-        raise ValueError("Placement strategy returned invalid shard indexes")
+    decisions_by_shard = _decisions_by_shard(decisions)
 
     manifest = {
         "strategy": _strategy_name(strategy),
+        "physical_copies": len(decisions),
         "layout": [],
     }
 
@@ -136,39 +170,48 @@ def save_object_shards(
 
     try:
         for shard_index, shard_data in enumerate(all_shards):
-            decision = decisions_by_shard[shard_index]
-            node = registry.get(decision.node_id)
-            shard_ref = node.write_shard(
-                disk_id=decision.disk_id,
-                shard_name=_shard_file_name(obj.id, obj.object_name, shard_index),
-                data=shard_data,
-            )
-            written_paths.append(shard_ref.path)
             checksum = _shard_checksum(shard_data)
             is_parity = shard_index >= DATA_SHARDS
 
-            db.add(
-                ObjectShard(
-                    object_id=obj.id,
-                    shard_index=shard_index,
-                    disk_name=decision.disk_id,
-                    node_id=decision.node_id,
+            for decision in decisions_by_shard[shard_index]:
+                node = registry.get(decision.node_id)
+                shard_ref = node.write_shard(
                     disk_id=decision.disk_id,
-                    shard_path=shard_ref.path,
-                    is_parity=is_parity,
-                    shard_size=len(shard_data),
-                    shard_checksum=checksum,
+                    shard_name=_shard_file_name(
+                        obj.id,
+                        obj.object_name,
+                        shard_index,
+                        decision.copy_index,
+                    ),
+                    data=shard_data,
                 )
-            )
-            manifest["layout"].append(
-                _manifest_entry(
-                    decision=decision,
-                    shard_path=shard_ref.path,
-                    is_parity=is_parity,
-                    shard_size=len(shard_data),
-                    shard_checksum=checksum,
+                written_paths.append(shard_ref.path)
+
+                db.add(
+                    ObjectShard(
+                        object_id=obj.id,
+                        shard_index=shard_index,
+                        copy_index=decision.copy_index,
+                        role=decision.role,
+                        disk_name=decision.disk_id,
+                        node_id=decision.node_id,
+                        disk_id=decision.disk_id,
+                        shard_path=shard_ref.path,
+                        is_parity=is_parity,
+                        shard_size=len(shard_data),
+                        shard_checksum=checksum,
+                        healthy=True,
+                    )
                 )
-            )
+                manifest["layout"].append(
+                    _manifest_entry(
+                        decision=decision,
+                        shard_path=shard_ref.path,
+                        is_parity=is_parity,
+                        shard_size=len(shard_data),
+                        shard_checksum=checksum,
+                    )
+                )
 
         db.add(
             ObjectPlacementManifest(

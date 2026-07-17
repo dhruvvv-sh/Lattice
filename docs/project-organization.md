@@ -62,6 +62,7 @@ Use this map when adding the next architecture pieces:
 | Reed-Solomon behavior | `app/storage/erasure.py` |
 | Shard splitting/reconstruction | `app/storage/shard_manager.py` |
 | Health scan behavior | `app/storage/heartbeat.py` |
+| Local API load balancing | `load_balancer.py` |
 
 ## Implementation Order
 
@@ -72,6 +73,7 @@ For the distributed architecture, implement in this order:
 3. Run storage nodes as separate FastAPI services.
 4. Add Redis for cache, locks, rate limits, and live node health.
 5. Add background workers for healing and rebalancing.
-6. Add a load balancer and run multiple API replicas.
+6. Containerize the local load balancer and run multiple API replicas in the
+   deployment environment.
 
 This keeps the prototype usable while each layer becomes real.

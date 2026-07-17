@@ -27,7 +27,10 @@ storage layer handles the file bytes.
 Client
   |
   v
-FastAPI application
+Local load balancer
+  |
+  v
+FastAPI application replicas
   |
   v
 API routes
@@ -48,10 +51,11 @@ Reed-Solomon sharded storage
 Local filesystem storage targets
 ```
 
-The current project runs as one API service with local storage targets. The
-storage targets represent disks on storage nodes, but today they are simulated
-with local directories. This keeps the project practical while still preserving
-the architecture needed for future distributed storage nodes.
+The current project can run as one API service or as multiple local API
+replicas behind the Python load balancer in `load_balancer.py`. Storage targets
+represent disks on storage nodes, but today they are simulated with local
+directories. This keeps the project practical while still preserving the
+architecture needed for future distributed storage nodes.
 
 ## Main Components
 
@@ -83,6 +87,23 @@ The API layer should stay focused on request and response behavior. It should
 not contain the full storage algorithm. Instead, it calls lower-level modules
 that know how to place shards, write files, and reconstruct objects.
 
+### Local Load Balancer
+
+The local load balancer is implemented in `load_balancer.py` with FastAPI and
+HTTPX.
+
+The load balancer is responsible for:
+
+- Listening on host port `8000`.
+- Forwarding requests to backend API replicas such as `127.0.0.1:8001` and
+  `127.0.0.1:8002`.
+- Routing requests with a simple round-robin strategy.
+- Exposing `/lb/health` and `/lb/backends` for development visibility.
+- Preserving forwarded request headers for future observability.
+
+This lets the project validate load-balancing behavior during normal local
+development before containerizing that layer later.
+
 ### PostgreSQL Metadata Database
 
 PostgreSQL stores the metadata tables defined in `app/models.py`.
@@ -93,7 +114,7 @@ The key tables are:
 | --- | --- |
 | `buckets` | Stores bucket records |
 | `objects` | Stores logical object records |
-| `object_shards` | Stores shard paths, shard indexes, parity flags, node IDs, disk IDs, sizes, and checksums |
+| `object_shards` | Stores one row per physical shard copy, including shard index, copy index, role, path, node ID, disk ID, health, size, and checksum |
 | `object_placement_manifests` | Stores the full placement decision for each object |
 
 PostgreSQL does not store the uploaded file bytes directly. It stores the map
@@ -149,6 +170,8 @@ Current strategies include:
 - `balanced`: prefers targets with lower used space.
 - `capacity_aware`: prefers targets with more free space.
 - `random` / `scheduler`: spreads shards randomly across healthy targets.
+- `replication_aware`: places each logical shard as a primary copy plus replica
+  copies on different logical nodes.
 
 The default strategy is `node_hash`, configured in
 `app/storage_engine/placement.py`.
@@ -164,6 +187,32 @@ Lattice currently uses a `4+2` Reed-Solomon layout:
 This means the system can recover the object if up to two shards are missing.
 That is the main durability feature of the current storage engine.
 
+### Shard-Level Replication
+
+Lattice also has the metadata and placement path for shard-level replication.
+Replication happens per logical Reed-Solomon shard, not by copying the whole
+object.
+
+With replication factor `2`, each logical shard has two physical copies:
+
+```text
+logical shard 0 -> primary copy on node-a/disk1
+logical shard 0 -> replica copy on node-c/disk5
+
+logical shard 1 -> primary copy on node-b/disk3
+logical shard 1 -> replica copy on node-d/disk7
+```
+
+The `object_shards` table stores every physical copy. The `copy_index` column
+identifies copy `0` as the primary, while copy indexes `1+` are replicas. The
+`role` column stores `primary` or `replica`, and `healthy` prepares the system
+for future repair workflows.
+
+Replication complements Reed-Solomon:
+
+- Replication gives a fast alternate copy of a shard.
+- Reed-Solomon reconstructs the object when logical shard data is unavailable.
+
 ## Upload Pipeline
 
 When a client uploads a file, this is the flow:
@@ -176,22 +225,35 @@ When a client uploads a file, this is the flow:
 5. API creates an object metadata row in PostgreSQL
 6. Storage engine splits the file into 4 data shards
 7. Storage engine creates 2 parity shards with Reed-Solomon
-8. Placement strategy chooses storage targets for all 6 shards
-9. Node registry writes each shard to the selected local disk path
-10. PostgreSQL stores one row per shard in object_shards
-11. PostgreSQL stores the full placement manifest
-12. API commits the transaction and returns upload metadata
+8. Placement strategy chooses storage targets for all logical shards
+9. If replication is enabled, placement chooses primary and replica targets
+   for each logical shard
+10. Node registry writes every physical shard copy to the selected local disk
+    path
+11. PostgreSQL stores one row per physical copy in object_shards
+12. PostgreSQL stores the full placement manifest
+13. API commits the transaction and returns upload metadata
 ```
 
 In short:
 
 ```text
 One uploaded file -> checksum -> metadata row -> 4 data shards -> 2 parity shards
--> placement decisions -> shard files -> shard metadata
+-> placement decisions -> primary and replica shard files -> shard-copy metadata
 ```
 
 If the upload fails after writing some shard files, the API rolls back the
 database transaction and removes the partially written shard files.
+
+Current replicated upload behavior:
+
+```text
+logical shard -> primary physical copy + replica physical copy
+```
+
+The download path still treats available physical copies as shard data and will
+be updated to explicitly prefer primaries, then replicas, before Reed-Solomon
+reconstruction.
 
 ## Download Pipeline
 
@@ -355,6 +417,8 @@ Tradeoffs:
 - Good for local development, but not a production orchestration solution.
 - Production deployments would need Kubernetes, ECS, Nomad, or another
   deployment platform.
+- The local load balancer should be containerized later when the deployment
+  shape is stable.
 
 ### Pytest and Locust
 
@@ -380,6 +444,7 @@ is still a local prototype.
 What is real today:
 
 - FastAPI object and bucket APIs.
+- Local round-robin API load balancing.
 - PostgreSQL metadata persistence.
 - Object sharding.
 - Reed-Solomon parity generation.
@@ -389,6 +454,7 @@ What is real today:
 
 What is still future work:
 
+- Containerized load balancer deployment.
 - Separate storage-node services.
 - Real network transfer between API and storage nodes.
 - Background healing when shards are missing.

@@ -188,8 +188,39 @@ Latest verification:
 | Placement | Pluggable placement strategies |
 | Load Testing | Locust |
 | Container Runtime | Docker Compose |
+| Load Balancer | FastAPI + HTTPX local reverse proxy |
 | Authentication | JWT (planned) |
 | Cache | Redis (planned) |
+
+---
+
+# Run Local Load Balancer
+
+Start two API replicas on different ports:
+
+```bash
+uvicorn main:app --host 127.0.0.1 --port 8001
+uvicorn main:app --host 127.0.0.1 --port 8002
+```
+
+Start the load balancer on port `8000`:
+
+```bash
+LATTICE_BACKENDS=http://127.0.0.1:8001,http://127.0.0.1:8002 uvicorn load_balancer:app --host 127.0.0.1 --port 8000
+```
+
+The application is then available through the load balancer at:
+
+```text
+http://localhost:8000
+```
+
+The load balancer uses round-robin routing across the configured API replicas.
+You can check its status at:
+
+```text
+http://localhost:8000/lb/health
+```
 
 ---
 
@@ -277,6 +308,7 @@ lattice/
 |   |   `-- ...
 |   |-- legacy/
 |   `-- samples/
+|-- load_balancer.py
 |-- Dockerfile
 |-- docker-compose.yml
 |-- simulationoutputs.md
@@ -354,6 +386,7 @@ Performance benchmark results are available in the `benchmark/` directory.
 * Object CRUD operations
 * PostgreSQL metadata engine
 * Docker Compose setup for API plus PostgreSQL
+* Local round-robin load balancer for multiple API replicas
 * Multi-disk storage directories
 * Object sharding prototype
 * Reed-Solomon parity generation
@@ -379,6 +412,7 @@ Performance benchmark results are available in the `benchmark/` directory.
 
 * Node-to-node shard transfer
 * Multi-node cluster deployment
+* Containerized load balancer deployment
 * Rack-aware and latency-aware placement
 * Replication-aware placement decisions
 * Automatic rebalancing

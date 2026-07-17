@@ -44,6 +44,10 @@ def ensure_runtime_schema():
         "disk_id": "VARCHAR",
         "shard_size": "INTEGER",
         "shard_checksum": "VARCHAR",
+        "copy_index": "INTEGER NOT NULL DEFAULT 0",
+        "role": "VARCHAR NOT NULL DEFAULT 'primary'",
+        "healthy": "BOOLEAN NOT NULL DEFAULT TRUE",
+        "last_verified_at": "TIMESTAMP",
     }
     missing_columns = {
         name: column_type

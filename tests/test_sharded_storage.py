@@ -5,7 +5,11 @@ import pytest
 from app.models import ObjectPlacementManifest, ObjectShard
 from app.storage_engine import sharded
 from app.storage_engine.nodes import build_local_node_registry
-from app.storage_engine.placement import BalancedPlacement, ShardPlacement
+from app.storage_engine.placement import (
+    BalancedPlacement,
+    ReplicationAwarePlacement,
+    ShardPlacement,
+)
 
 
 class FakeDb:
@@ -177,5 +181,52 @@ def test_sharded_storage_can_place_shards_across_three_local_nodes(tmp_path):
 
     registry.get("node-b").delete_shard("disk3", obj.shards[2].shard_path)
     registry.get("node-c").delete_shard("disk5", obj.shards[4].shard_path)
+
+    assert sharded.load_object_bytes(obj, node_registry=registry) == data
+
+
+def test_sharded_storage_writes_primary_and_replica_copies(tmp_path):
+    registry = build_local_node_registry(
+        {
+            "node-a": [tmp_path / "node-a" / "disk1", tmp_path / "node-a" / "disk2"],
+            "node-b": [tmp_path / "node-b" / "disk3", tmp_path / "node-b" / "disk4"],
+            "node-c": [tmp_path / "node-c" / "disk5", tmp_path / "node-c" / "disk6"],
+        }
+    )
+    data = b"replicated shard upload" * 173
+    obj = SimpleNamespace(
+        id=105,
+        object_name="replicated.bin",
+        size=len(data),
+        shards=[],
+        placement_manifest=None,
+    )
+
+    paths = sharded.save_object_shards(
+        FakeDb(obj),
+        obj,
+        data,
+        node_registry=registry,
+        placement_strategy=ReplicationAwarePlacement(),
+    )
+
+    assert len(paths) == sharded.TOTAL_SHARDS * 2
+    assert len(obj.shards) == sharded.TOTAL_SHARDS * 2
+    assert obj.placement_manifest.manifest["strategy"] == "ReplicationAwarePlacement"
+    assert obj.placement_manifest.manifest["physical_copies"] == sharded.TOTAL_SHARDS * 2
+    assert len(obj.placement_manifest.manifest["layout"]) == sharded.TOTAL_SHARDS * 2
+    assert all(Path(path).exists() for path in paths)
+
+    for shard_index in range(sharded.TOTAL_SHARDS):
+        copies = [
+            shard
+            for shard in obj.shards
+            if shard.shard_index == shard_index
+        ]
+
+        assert [copy.copy_index for copy in copies] == [0, 1]
+        assert [copy.role for copy in copies] == ["primary", "replica"]
+        assert copies[0].node_id != copies[1].node_id
+        assert copies[0].shard_checksum == copies[1].shard_checksum
 
     assert sharded.load_object_bytes(obj, node_registry=registry) == data

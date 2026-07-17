@@ -13,6 +13,8 @@ class PlacementDecision:
     node_id: str
     disk_id: str
     path: Path
+    copy_index: int = 0
+    role: str = "primary"
     replica: bool = False
     metadata: dict | None = None
 
@@ -267,6 +269,125 @@ class NodeHashPlacement(PlacementStrategy):
         return decisions
 
 
+class ReplicationAwarePlacement(PlacementStrategy):
+    """
+    Places each logical shard as one primary copy plus replica copies.
+
+    Replicas for a shard are always placed on different logical nodes from the
+    primary and from each other. This keeps the strategy simple enough for the
+    current local-node architecture while preserving the key production rule:
+    do not let one node failure remove every copy of the same logical shard.
+    """
+
+    def __init__(self, replication_factor: int = 2):
+        if replication_factor < 1:
+            raise ValueError("replication_factor must be at least 1")
+
+        self.replication_factor = replication_factor
+
+    def place_object(
+        self,
+        request: PlacementRequest,
+        targets: list[StorageTarget],
+    ) -> list[PlacementDecision]:
+        healthy_targets = [
+            target
+            for target in targets
+            if target.healthy and target.online
+        ]
+        targets_by_node = self._targets_by_node(healthy_targets)
+
+        if len(targets_by_node) < self.replication_factor:
+            raise ValueError(
+                "Not enough healthy logical nodes for shard replication"
+            )
+
+        decisions: list[PlacementDecision] = []
+
+        for shard_id in range(request.total_shards):
+            selected_nodes: set[str] = set()
+
+            for copy_index in range(self.replication_factor):
+                role = "primary" if copy_index == 0 else "replica"
+                target = self._select_target(
+                    request=request,
+                    targets_by_node=targets_by_node,
+                    shard_id=shard_id,
+                    copy_index=copy_index,
+                    excluded_nodes=selected_nodes,
+                )
+                selected_nodes.add(target.node_id)
+                decisions.append(
+                    PlacementDecision(
+                        shard_id=shard_id,
+                        node_id=target.node_id,
+                        disk_id=target.disk_id,
+                        path=target.path,
+                        copy_index=copy_index,
+                        role=role,
+                        replica=copy_index > 0,
+                        metadata={
+                            "placement": "replication_aware",
+                            "replication_factor": self.replication_factor,
+                        },
+                    )
+                )
+
+        return decisions
+
+    @staticmethod
+    def _targets_by_node(
+        targets: list[StorageTarget],
+    ) -> dict[str, list[StorageTarget]]:
+        targets_by_node: dict[str, list[StorageTarget]] = {}
+
+        for target in targets:
+            targets_by_node.setdefault(target.node_id, []).append(target)
+
+        return {
+            node_id: sorted(
+                node_targets,
+                key=lambda target: (
+                    target.used_bytes,
+                    -target.free_space,
+                    target.disk_id,
+                    target.path.as_posix(),
+                ),
+            )
+            for node_id, node_targets in targets_by_node.items()
+        }
+
+    @staticmethod
+    def _select_target(
+        request: PlacementRequest,
+        targets_by_node: dict[str, list[StorageTarget]],
+        shard_id: int,
+        copy_index: int,
+        excluded_nodes: set[str],
+    ) -> StorageTarget:
+        candidate_node_ids = [
+            node_id
+            for node_id in sorted(targets_by_node)
+            if node_id not in excluded_nodes
+        ]
+
+        if not candidate_node_ids:
+            raise ValueError("No healthy node available for shard replica")
+
+        node_digest = hashlib.sha256(
+            f"{request.object_id}:{shard_id}:{copy_index}:node".encode("utf-8")
+        ).hexdigest()
+        node_id = candidate_node_ids[int(node_digest, 16) % len(candidate_node_ids)]
+        node_targets = targets_by_node[node_id]
+        disk_digest = hashlib.sha256(
+            f"{request.object_id}:{shard_id}:{copy_index}:{node_id}:disk".encode(
+                "utf-8"
+            )
+        ).hexdigest()
+
+        return node_targets[int(disk_digest, 16) % len(node_targets)]
+
+
 BUILT_IN_STRATEGIES = {
     "balanced": BalancedPlacement,
     "capacity": CapacityAwarePlacement,
@@ -277,6 +398,8 @@ BUILT_IN_STRATEGIES = {
     "scheduler": PlacementScheduler,
 
     "node_hash": NodeHashPlacement,
+    "replication": ReplicationAwarePlacement,
+    "replication_aware": ReplicationAwarePlacement,
 }
 
 
